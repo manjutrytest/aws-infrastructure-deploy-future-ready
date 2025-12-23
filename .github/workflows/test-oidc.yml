@@ -1,0 +1,27 @@
+name: Test OIDC Authentication
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-oidc:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Debug ARN
+        run: |
+          echo "Testing ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_DEPLOYMENT_ROLE }}"
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_DEPLOYMENT_ROLE }}
+          aws-region: eu-north-1
+          
+      - name: Test AWS Access
+        run: |
+          echo "Testing AWS access..."
+          aws sts get-caller-identity
+          echo "✅ OIDC authentication successful!"
