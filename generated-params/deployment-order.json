@@ -1,0 +1,57 @@
+﻿{
+    "stacks":  [
+                   {
+                       "template":  "foundation/vpc.yml",
+                       "name":  "vpc",
+                       "enabled":  true,
+                       "parameters":  "generated-params/vpc-params.json"
+                   },
+                   {
+                       "template":  "network/subnets.yml",
+                       "name":  "subnets",
+                       "depends_on":  [
+                                          "vpc"
+                                      ],
+                       "enabled":  true,
+                       "parameters":  "generated-params/subnet-params.json"
+                   },
+                   {
+                       "template":  "network/igw.yml",
+                       "name":  "igw",
+                       "depends_on":  [
+                                          "vpc"
+                                      ],
+                       "enabled":  true,
+                       "parameters":  "generated-params/igw-params.json"
+                   },
+                   {
+                       "template":  "network/nat.yml",
+                       "name":  "nat",
+                       "depends_on":  [
+                                          "subnets",
+                                          "igw"
+                                      ],
+                       "enabled":  true,
+                       "parameters":  "generated-params/nat-params.json"
+                   },
+                   {
+                       "template":  "security/security-groups.yml",
+                       "name":  "security-groups",
+                       "depends_on":  [
+                                          "vpc"
+                                      ],
+                       "enabled":  true,
+                       "parameters":  "generated-params/security-group-params.json"
+                   },
+                   {
+                       "template":  "compute/ec2.yml",
+                       "name":  "ec2",
+                       "depends_on":  [
+                                          "subnets",
+                                          "security-groups"
+                                      ],
+                       "enabled":  true,
+                       "parameters":  "generated-params/ec2-params.json"
+                   }
+               ]
+}

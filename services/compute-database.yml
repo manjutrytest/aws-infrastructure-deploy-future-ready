@@ -1,0 +1,326 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Database Server - Append-only service deployment'
+
+Parameters:
+  Customer:
+    Type: String
+    Description: Customer name
+    
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    
+  InstanceId:
+    Type: String
+    Description: Instance ID for this deployment
+    
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t3.large
+    
+  InstanceCount:
+    Type: Number
+    Description: Number of instances
+    Default: 1
+    MinValue: 1
+    MaxValue: 3
+    
+  RootVolumeSize:
+    Type: Number
+    Description: Root volume size in GB
+    Default: 50
+    MinValue: 20
+    MaxValue: 500
+    
+  SubnetSelection:
+    Type: String
+    Description: Subnet type for deployment
+    Default: private
+    AllowedValues: [public, private]
+    
+  EnableSSM:
+    Type: String
+    Description: Enable AWS Systems Manager
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+Conditions:
+  UsePublicSubnet: !Equals [!Ref SubnetSelection, 'public']
+  EnableSSMCondition: !Equals [!Ref EnableSSM, 'true']
+
+Resources:
+  # Security Group
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for ${Customer}-${Environment} database server ${InstanceId}'
+      VpcId: !ImportValue 
+        Fn::Sub: '${Customer}-${Environment}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-VpcCidr'
+          Description: MySQL access from VPC
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-VpcCidr'
+          Description: PostgreSQL access from VPC
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-VpcCidr'
+          Description: SSH access from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-db-sg-${InstanceId}'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: database
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # IAM Role for EC2 (if SSM enabled)
+  EC2Role:
+    Type: AWS::IAM::Role
+    Condition: EnableSSMCondition
+    Properties:
+      RoleName: !Sub '${Customer}-${Environment}-db-role-${InstanceId}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: DatabaseBackupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub 'arn:aws:s3:::${Customer}-${Environment}-db-backups-${InstanceId}/*'
+      Tags:
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: database
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: EnableSSMCondition
+    Properties:
+      InstanceProfileName: !Sub '${Customer}-${Environment}-db-profile-${InstanceId}'
+      Roles:
+        - !Ref EC2Role
+    DeletionPolicy: Retain
+
+  # S3 Bucket for Database Backups
+  DatabaseBackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Customer}-${Environment}-db-backups-${InstanceId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-db-backups-${InstanceId}'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: database
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Launch Template
+  DatabaseLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${Customer}-${Environment}-db-lt-${InstanceId}'
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: !If
+          - EnableSSMCondition
+          - Arn: !GetAtt EC2InstanceProfile.Arn
+          - !Ref AWS::NoValue
+        SecurityGroupIds:
+          - !Ref DatabaseSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+          - DeviceName: /dev/sdf
+            Ebs:
+              VolumeSize: 100
+              VolumeType: gp3
+              DeleteOnTermination: false
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y mysql-server
+            
+            # Format and mount data volume
+            mkfs -t ext4 /dev/xvdf
+            mkdir /data
+            mount /dev/xvdf /data
+            echo '/dev/xvdf /data ext4 defaults,nofail 0 2' >> /etc/fstab
+            
+            # Configure MySQL data directory
+            systemctl stop mysqld
+            mkdir -p /data/mysql
+            chown mysql:mysql /data/mysql
+            sed -i 's|datadir=/var/lib/mysql|datadir=/data/mysql|' /etc/my.cnf
+            systemctl start mysqld
+            systemctl enable mysqld
+            
+            # Create backup script
+            cat > /usr/local/bin/backup-db.sh << 'EOF'
+            #!/bin/bash
+            DATE=$(date +%Y%m%d_%H%M%S)
+            BACKUP_FILE="/tmp/db_backup_$DATE.sql"
+            mysqldump --all-databases > $BACKUP_FILE
+            aws s3 cp $BACKUP_FILE s3://${DatabaseBackupBucket}/backups/db_backup_$DATE.sql
+            rm $BACKUP_FILE
+            EOF
+            chmod +x /usr/local/bin/backup-db.sh
+            
+            # Schedule daily backups
+            echo "0 2 * * * /usr/local/bin/backup-db.sh" | crontab -
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-db-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: database
+              - Key: InstanceId
+                Value: !Ref InstanceId
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-db-volume-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: database
+              - Key: InstanceId
+                Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Auto Scaling Group
+  DatabaseAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${Customer}-${Environment}-db-asg-${InstanceId}'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DatabaseLaunchTemplate
+        Version: !GetAtt DatabaseLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref InstanceCount
+      MaxSize: !Ref InstanceCount
+      DesiredCapacity: !Ref InstanceCount
+      VPCZoneIdentifier: !If
+        - UsePublicSubnet
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PublicSubnets']
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PrivateSubnets']
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-db-asg-${InstanceId}'
+          PropagateAtLaunch: false
+        - Key: Customer
+          Value: !Ref Customer
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+        - Key: Service
+          Value: database
+          PropagateAtLaunch: true
+        - Key: InstanceId
+          Value: !Ref InstanceId
+          PropagateAtLaunch: true
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+Outputs:
+  SecurityGroupId:
+    Description: Security Group ID
+    Value: !Ref DatabaseSecurityGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-db-sg-${InstanceId}'
+
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref DatabaseAutoScalingGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-db-asg-${InstanceId}'
+
+  BackupBucketName:
+    Description: S3 Backup Bucket Name
+    Value: !Ref DatabaseBackupBucket
+    Export:
+      Name: !Sub '${Customer}-${Environment}-db-backup-bucket-${InstanceId}'
+
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref DatabaseLaunchTemplate
+    Export:
+      Name: !Sub '${Customer}-${Environment}-db-lt-${InstanceId}'

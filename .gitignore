@@ -1,23 +1,56 @@
-# Generated files
-generated-params/
-*.tmp
+# AWS Infrastructure Deployment - .gitignore
 
-# AWS CLI cache
-.aws/
+# Generated parameter files
+*-params.json
+network-params.json
+service-params-*.json
 
-# Environment files
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 .env
-.env.local
-.env.*.local
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# IDE files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS files
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Logs
@@ -25,42 +58,30 @@ Thumbs.db
 logs/
 
 # Temporary files
-temp/
-tmp/
+*.tmp
+*.temp
+.cache/
 
-# CloudFormation packages
-packaged-template.yml
-packaged-template.yaml
+# AWS
+.aws/
+aws-exports.js
 
-# Terraform files (if mixed usage)
-*.tfstate
-*.tfstate.backup
-.terraform/
-.terraform.lock.hcl
+# Secrets (should never be committed)
+*.pem
+*.key
+secrets.yml
+secrets.yaml
+.env.local
+.env.production
 
-# Node modules (if using CDK)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Backup files
+*.bak
+*.backup
 
-# Python files (if using CDK)
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# CloudFormation outputs
+outputs/
+stack-outputs/
 
-# Coverage reports
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+# Test files
+test-*.csv
+test-*.json

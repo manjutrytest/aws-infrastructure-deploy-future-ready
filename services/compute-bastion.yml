@@ -1,0 +1,342 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Bastion Host - Append-only service deployment'
+
+Parameters:
+  Customer:
+    Type: String
+    Description: Customer name
+    
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    
+  InstanceId:
+    Type: String
+    Description: Instance ID for this deployment
+    
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t3.micro
+    
+  InstanceCount:
+    Type: Number
+    Description: Number of instances
+    Default: 1
+    MinValue: 1
+    MaxValue: 2
+    
+  RootVolumeSize:
+    Type: Number
+    Description: Root volume size in GB
+    Default: 10
+    MinValue: 8
+    MaxValue: 50
+    
+  SubnetSelection:
+    Type: String
+    Description: Subnet type for deployment
+    Default: public
+    AllowedValues: [public, private]
+    
+  EnableSSM:
+    Type: String
+    Description: Enable AWS Systems Manager
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    
+  AllowedCidr:
+    Type: String
+    Description: CIDR block allowed to SSH to bastion
+    Default: '0.0.0.0/0'
+
+Conditions:
+  UsePublicSubnet: !Equals [!Ref SubnetSelection, 'public']
+  EnableSSMCondition: !Equals [!Ref EnableSSM, 'true']
+
+Resources:
+  # Security Group
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for ${Customer}-${Environment} bastion host ${InstanceId}'
+      VpcId: !ImportValue 
+        Fn::Sub: '${Customer}-${Environment}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCidr
+          Description: SSH access from allowed CIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-bastion-sg-${InstanceId}'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: bastion
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # IAM Role for EC2 (if SSM enabled)
+  EC2Role:
+    Type: AWS::IAM::Role
+    Condition: EnableSSMCondition
+    Properties:
+      RoleName: !Sub '${Customer}-${Environment}-bastion-role-${InstanceId}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: BastionLoggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ec2/bastion/${Customer}-${Environment}-${InstanceId}:*'
+      Tags:
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: bastion
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: EnableSSMCondition
+    Properties:
+      InstanceProfileName: !Sub '${Customer}-${Environment}-bastion-profile-${InstanceId}'
+      Roles:
+        - !Ref EC2Role
+    DeletionPolicy: Retain
+
+  # CloudWatch Log Group
+  BastionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableSSMCondition
+    Properties:
+      LogGroupName: !Sub '/aws/ec2/bastion/${Customer}-${Environment}-${InstanceId}'
+      RetentionInDays: 30
+      Tags:
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: bastion
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Key Pair (for SSH access)
+  BastionKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub '${Customer}-${Environment}-bastion-key-${InstanceId}'
+      KeyType: rsa
+      KeyFormat: pem
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-bastion-key-${InstanceId}'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: bastion
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Launch Template
+  BastionLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${Customer}-${Environment}-bastion-lt-${InstanceId}'
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref BastionKeyPair
+        IamInstanceProfile: !If
+          - EnableSSMCondition
+          - Arn: !GetAtt EC2InstanceProfile.Arn
+          - !Ref AWS::NoValue
+        SecurityGroupIds:
+          - !Ref BastionSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y awslogs
+            
+            # Configure CloudWatch Logs
+            cat > /etc/awslogs/awslogs.conf << EOF
+            [general]
+            state_file = /var/lib/awslogs/agent-state
+            
+            [/var/log/messages]
+            file = /var/log/messages
+            log_group_name = /aws/ec2/bastion/${Customer}-${Environment}-${InstanceId}
+            log_stream_name = {instance_id}/messages
+            datetime_format = %b %d %H:%M:%S
+            
+            [/var/log/secure]
+            file = /var/log/secure
+            log_group_name = /aws/ec2/bastion/${Customer}-${Environment}-${InstanceId}
+            log_stream_name = {instance_id}/secure
+            datetime_format = %b %d %H:%M:%S
+            EOF
+            
+            # Configure region for CloudWatch Logs
+            sed -i 's/region = us-east-1/region = ${AWS::Region}/' /etc/awslogs/awscli.conf
+            
+            # Start CloudWatch Logs agent
+            systemctl start awslogsd
+            systemctl enable awslogsd
+            
+            # Install additional security tools
+            yum install -y fail2ban
+            systemctl start fail2ban
+            systemctl enable fail2ban
+            
+            # Configure SSH banner
+            echo "WARNING: This is a private system. Unauthorized access is prohibited." > /etc/ssh/banner
+            echo "Banner /etc/ssh/banner" >> /etc/ssh/sshd_config
+            systemctl restart sshd
+            
+            # Create motd
+            cat > /etc/motd << EOF
+            =====================================
+            ${Customer} ${Environment} Bastion Host
+            Instance ID: ${InstanceId}
+            =====================================
+            This system is monitored and logged.
+            All activities are recorded.
+            =====================================
+            EOF
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-bastion-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: bastion
+              - Key: InstanceId
+                Value: !Ref InstanceId
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-bastion-volume-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: bastion
+              - Key: InstanceId
+                Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Auto Scaling Group
+  BastionAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${Customer}-${Environment}-bastion-asg-${InstanceId}'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BastionLaunchTemplate
+        Version: !GetAtt BastionLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref InstanceCount
+      MaxSize: !Ref InstanceCount
+      DesiredCapacity: !Ref InstanceCount
+      VPCZoneIdentifier: !If
+        - UsePublicSubnet
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PublicSubnets']
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PrivateSubnets']
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-bastion-asg-${InstanceId}'
+          PropagateAtLaunch: false
+        - Key: Customer
+          Value: !Ref Customer
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+        - Key: Service
+          Value: bastion
+          PropagateAtLaunch: true
+        - Key: InstanceId
+          Value: !Ref InstanceId
+          PropagateAtLaunch: true
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+Outputs:
+  SecurityGroupId:
+    Description: Security Group ID
+    Value: !Ref BastionSecurityGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-bastion-sg-${InstanceId}'
+
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref BastionAutoScalingGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-bastion-asg-${InstanceId}'
+
+  KeyPairName:
+    Description: Key Pair Name
+    Value: !Ref BastionKeyPair
+    Export:
+      Name: !Sub '${Customer}-${Environment}-bastion-key-${InstanceId}'
+
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref BastionLaunchTemplate
+    Export:
+      Name: !Sub '${Customer}-${Environment}-bastion-lt-${InstanceId}'
+
+  LogGroupName:
+    Condition: EnableSSMCondition
+    Description: CloudWatch Log Group Name
+    Value: !Ref BastionLogGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-bastion-logs-${InstanceId}'

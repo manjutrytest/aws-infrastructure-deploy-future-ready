@@ -1,0 +1,242 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Web Server - Append-only service deployment'
+
+Parameters:
+  Customer:
+    Type: String
+    Description: Customer name
+    
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    
+  InstanceId:
+    Type: String
+    Description: Instance ID for this deployment
+    
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: t3.medium
+    
+  InstanceCount:
+    Type: Number
+    Description: Number of instances
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+    
+  RootVolumeSize:
+    Type: Number
+    Description: Root volume size in GB
+    Default: 20
+    MinValue: 8
+    MaxValue: 100
+    
+  SubnetSelection:
+    Type: String
+    Description: Subnet type for deployment
+    Default: public
+    AllowedValues: [public, private]
+    
+  EnableSSM:
+    Type: String
+    Description: Enable AWS Systems Manager
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+Conditions:
+  UsePublicSubnet: !Equals [!Ref SubnetSelection, 'public']
+  EnableSSMCondition: !Equals [!Ref EnableSSM, 'true']
+
+Resources:
+  # Security Group
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for ${Customer}-${Environment} web server ${InstanceId}'
+      VpcId: !ImportValue 
+        Fn::Sub: '${Customer}-${Environment}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-VpcCidr'
+          Description: SSH access from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-web-sg-${InstanceId}'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: web
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # IAM Role for EC2 (if SSM enabled)
+  EC2Role:
+    Type: AWS::IAM::Role
+    Condition: EnableSSMCondition
+    Properties:
+      RoleName: !Sub '${Customer}-${Environment}-web-role-${InstanceId}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: web
+        - Key: InstanceId
+          Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: EnableSSMCondition
+    Properties:
+      InstanceProfileName: !Sub '${Customer}-${Environment}-web-profile-${InstanceId}'
+      Roles:
+        - !Ref EC2Role
+    DeletionPolicy: Retain
+
+  # Launch Template
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${Customer}-${Environment}-web-lt-${InstanceId}'
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: !If
+          - EnableSSMCondition
+          - Arn: !GetAtt EC2InstanceProfile.Arn
+          - !Ref AWS::NoValue
+        SecurityGroupIds:
+          - !Ref WebServerSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+            echo "<h1>Web Server ${InstanceId} - ${Customer} ${Environment}</h1>" > /var/www/html/index.html
+            echo "<p>Deployed: $(date)</p>" >> /var/www/html/index.html
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-web-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: web
+              - Key: InstanceId
+                Value: !Ref InstanceId
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub '${Customer}-${Environment}-web-volume-${InstanceId}'
+              - Key: Customer
+                Value: !Ref Customer
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Service
+                Value: web
+              - Key: InstanceId
+                Value: !Ref InstanceId
+    DeletionPolicy: Retain
+
+  # Auto Scaling Group
+  WebServerAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${Customer}-${Environment}-web-asg-${InstanceId}'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref InstanceCount
+      MaxSize: !Ref InstanceCount
+      DesiredCapacity: !Ref InstanceCount
+      VPCZoneIdentifier: !If
+        - UsePublicSubnet
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PublicSubnets']
+        - !Split [',', !ImportValue 
+            Fn::Sub: '${Customer}-${Environment}-PrivateSubnets']
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-web-asg-${InstanceId}'
+          PropagateAtLaunch: false
+        - Key: Customer
+          Value: !Ref Customer
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+        - Key: Service
+          Value: web
+          PropagateAtLaunch: true
+        - Key: InstanceId
+          Value: !Ref InstanceId
+          PropagateAtLaunch: true
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+Outputs:
+  SecurityGroupId:
+    Description: Security Group ID
+    Value: !Ref WebServerSecurityGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-web-sg-${InstanceId}'
+
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref WebServerAutoScalingGroup
+    Export:
+      Name: !Sub '${Customer}-${Environment}-web-asg-${InstanceId}'
+
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref WebServerLaunchTemplate
+    Export:
+      Name: !Sub '${Customer}-${Environment}-web-lt-${InstanceId}'

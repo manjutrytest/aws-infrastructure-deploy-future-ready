@@ -2,196 +2,181 @@
 
 ## Overview
 
-This repository implements a CSV-driven AWS infrastructure deployment solution that provides a scalable, maintainable, and secure approach to infrastructure as code.
+This repository implements a BOM (Bill of Materials) driven AWS infrastructure deployment system with strict append-only deployment rules to ensure enterprise-grade safety and immutability.
 
 ## Architecture Principles
 
-### 1. CSV as Single Source of Truth
-- All infrastructure requirements defined in `config/customer.csv`
-- No hard-coded values in templates or workflows
-- Customer modifications require only CSV changes
+### 1. BOM-Driven Configuration
+- **Single Source of Truth**: All infrastructure is defined in `bom/customer-bom.csv`
+- **No Hard-Coding**: All values come from BOM or workflow inputs
+- **Change Management**: Infrastructure changes require BOM updates only
 
-### 2. Layered Stack Architecture
+### 2. Immutable Network Foundation
+- **One-Time Deployment**: Network stack is created once and never modified
+- **Retention Policy**: All network resources have `DeletionPolicy: Retain`
+- **Export Values**: Network outputs are exported for service consumption
+
+### 3. Append-Only Services
+- **New Stacks Only**: Each service deployment creates a NEW CloudFormation stack
+- **No Updates**: Existing service stacks are never updated or replaced
+- **Instance IDs**: Unique instance IDs prevent stack name collisions
+- **Resource Retention**: All service resources have `DeletionPolicy: Retain`
+
+## Deployment Architecture
+
 ```
-Bootstrap Layer (One-time setup)
-├── OIDC Provider
-└── GitHub Deploy Roles
-
-Foundation Layer
-└── VPC (Created once, reused forever)
-
-Network Layer
-├── Subnets (Public/Private)
-├── Internet Gateway
-└── NAT Gateway
-
-Security Layer
-└── Security Groups
-
-Compute Layer
-└── EC2 Instances
+┌─────────────────────────────────────────────────────────────┐
+│                    GitHub Actions Workflow                  │
+├─────────────────────────────────────────────────────────────┤
+│ 1. BOM Validation                                          │
+│ 2. Manual Approval (GitHub Environments)                   │
+│ 3. Network Foundation (if needed)                          │
+│ 4. Service Deployments (parallel, new stacks only)         │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     AWS Account (eu-north-1)               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │            Network Foundation Stack                 │   │
+│  │  • VPC                                             │   │
+│  │  • Public/Private Subnets                          │   │
+│  │  • Internet Gateway                                │   │
+│  │  • NAT Gateways                                    │   │
+│  │  • Route Tables                                    │   │
+│  │  Stack: customer-env-network-foundation            │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                              │                             │
+│                              ▼                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              Service Stacks (Append-Only)          │   │
+│  │                                                     │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐          │   │
+│  │  │ Web Service 001 │  │ Web Service 002 │          │   │
+│  │  │ • EC2 Instances │  │ • EC2 Instances │          │   │
+│  │  │ • Security Grps │  │ • Security Grps │          │   │
+│  │  │ • Auto Scaling  │  │ • Auto Scaling  │          │   │
+│  │  └─────────────────┘  └─────────────────┘          │   │
+│  │                                                     │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐          │   │
+│  │  │ Database 001    │  │ Bastion 001     │          │   │
+│  │  │ • EC2 Instance  │  │ • EC2 Instance  │          │   │
+│  │  │ • EBS Volumes   │  │ • Key Pair      │          │   │
+│  │  │ • S3 Backups    │  │ • CloudWatch    │          │   │
+│  │  └─────────────────┘  └─────────────────┘          │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 3. Dependency Management
-- Stacks deployed in dependency order
-- CloudFormation Outputs/ImportValue for resource sharing
-- Conditional stack deployment based on CSV configuration
+## Stack Naming Convention
 
-## Component Details
+### Network Stack
+```
+<customer>-<environment>-network-foundation
+```
+Examples:
+- `acme-dev-network-foundation`
+- `contoso-prod-network-foundation`
 
-### VPC Foundation
-- **Purpose**: Network foundation for all resources
-- **Lifecycle**: Created once, never destroyed
-- **Exports**: VPC ID, CIDR, Availability Zones
-- **Features**: DNS support, Flow Logs, Multi-AZ
+### Service Stacks
+```
+<customer>-<environment>-<service-name>-<instance-id>
+```
+Examples:
+- `acme-dev-compute-web-001`
+- `acme-dev-compute-web-002`
+- `acme-dev-compute-database-001`
+- `acme-dev-compute-bastion-001`
 
-### Subnets
-- **Public Subnets**: Internet-accessible resources
-- **Private Subnets**: Internal resources with NAT access
-- **Configuration**: CIDR blocks, AZ placement via CSV
-- **Routing**: Automatic route table associations
+## Resource Tagging Strategy
 
-### Internet Gateway
-- **Purpose**: Internet access for public subnets
-- **Attachment**: Automatic VPC attachment
-- **Routing**: Default route (0.0.0.0/0) to IGW
-
-### NAT Gateway
-- **Strategies**: None, Single, Per-AZ
-- **Purpose**: Outbound internet for private subnets
-- **Cost Optimization**: Single NAT for dev, Per-AZ for prod
-
-### Security Groups
-- **Web Security Group**: HTTP/HTTPS/RDP access
-- **Database Security Group**: Database access from web tier
-- **Load Balancer Security Group**: ALB access (future)
-- **Rules**: Defined via CSV configuration
-
-### EC2 Instances
-- **Operating Systems**: Amazon Linux, Ubuntu, RHEL, Windows
-- **Instance Types**: t3, t3a, m5, m6i, c5, r5 families
-- **Features**: Auto Scaling, SSM integration, encrypted storage
-- **Placement**: Public or private subnets
+All resources are tagged with:
+- **Customer**: Customer name
+- **Environment**: Environment (dev/staging/prod)
+- **Service**: Service type (web/database/bastion)
+- **InstanceId**: Instance ID for tracking
 
 ## Security Architecture
 
-### OIDC Authentication
-- GitHub Actions authenticate via OIDC
-- No AWS access keys stored in GitHub
-- Environment-specific role assumption
-- Least privilege permissions
-
 ### Network Security
-- Private subnets for sensitive workloads
-- Security groups with minimal required access
-- VPC Flow Logs for monitoring
-- Encrypted EBS volumes
+- **Private Subnets**: Database and internal services
+- **Public Subnets**: Web services and bastion hosts
+- **Security Groups**: Least privilege access
+- **NACLs**: Additional network-level protection
 
-### IAM Security
-- Separate roles for dev/prod environments
-- CloudFormation deployment permissions
-- SSM access for instance management
+### Access Control
+- **IAM Roles**: Service-specific roles with minimal permissions
+- **SSM Access**: Secure shell access without SSH keys
+- **Bastion Hosts**: Secure access to private resources
 
-## Scalability Design
+### Encryption
+- **EBS Volumes**: Encrypted at rest
+- **S3 Buckets**: Server-side encryption
+- **CloudWatch Logs**: Encrypted log storage
 
-### Horizontal Scaling
-- Auto Scaling Groups for EC2 instances
-- Multiple Availability Zone deployment
-- Load balancer ready architecture
-
-### Service Expansion
-The architecture supports future services:
-- **Application Load Balancer**: Target groups, listeners
-- **RDS**: Multi-AZ, read replicas, parameter groups
-- **ECS**: Clusters, services, task definitions
-- **EKS**: Node groups, add-ons, IRSA
-- **Auto Scaling**: Policies, CloudWatch alarms
-- **VPC Endpoints**: S3, DynamoDB, other services
-
-## Environment Strategy
-
-### Development Environment
-- Single NAT Gateway (cost optimization)
-- Smaller instance types
-- Shorter log retention
-- Relaxed monitoring
-
-### Production Environment
-- Per-AZ NAT Gateways (high availability)
-- Production instance types
-- Extended log retention
-- Detailed monitoring and alerting
-
-### Environment Promotion
-1. Test changes in development
-2. Validate infrastructure and applications
-3. Deploy same CSV configuration to production
-4. Environment-specific parameters via JSON files
-
-## Monitoring and Observability
+## Monitoring and Logging
 
 ### CloudWatch Integration
-- VPC Flow Logs
-- EC2 detailed monitoring (prod)
-- CloudFormation stack events
-- Custom metrics via CloudWatch Agent
+- **Instance Monitoring**: CPU, memory, disk metrics
+- **Log Aggregation**: Centralized logging per service
+- **Alarms**: Automated alerting for critical metrics
 
-### AWS Systems Manager
-- Instance management without SSH/RDP
-- Patch management
-- Configuration compliance
-- Session Manager for secure access
-
-## Cost Optimization
-
-### Resource Optimization
-- Right-sized instances based on CSV configuration
-- GP3 volumes for better price/performance
-- Single NAT Gateway in development
-- Automated resource tagging for cost allocation
-
-### Lifecycle Management
-- EBS volume encryption
-- Automated backups via AWS Backup
-- Resource cleanup via stack deletion
+### Backup Strategy
+- **Database Backups**: Automated S3 backups
+- **EBS Snapshots**: Point-in-time recovery
+- **Retention Policies**: Automated cleanup
 
 ## Disaster Recovery
 
-### Multi-AZ Deployment
-- Resources distributed across AZs
-- Database replication (when implemented)
-- Load balancer health checks
+### Network Recovery
+- **Immutable Design**: Network can be recreated from BOM
+- **Export Values**: Service dependencies preserved
+- **Multi-AZ**: High availability across zones
 
-### Backup Strategy
-- EBS snapshots
-- Cross-region replication (configurable)
-- Point-in-time recovery for databases
+### Service Recovery
+- **Append-Only**: Failed deployments don't affect existing services
+- **Independent Stacks**: Service failures are isolated
+- **Data Persistence**: EBS volumes and S3 data retained
 
-## Future Enhancements
+## Scaling Strategy
 
-### Planned Services
-1. **Application Load Balancer**
-   - SSL termination
-   - Path-based routing
-   - Health checks
+### Horizontal Scaling
+- **New Instance IDs**: Deploy additional service instances
+- **Load Distribution**: Auto Scaling Groups handle distribution
+- **Independent Scaling**: Each service scales independently
 
-2. **RDS Database**
-   - Multi-AZ deployment
-   - Automated backups
-   - Read replicas
+### Vertical Scaling
+- **New Deployments**: Deploy new instances with larger sizes
+- **Gradual Migration**: Move workloads to new instances
+- **Zero Downtime**: Old instances remain during transition
 
-3. **ECS/EKS Container Platform**
-   - Microservices architecture
-   - Auto scaling
-   - Service mesh integration
+## Cost Optimization
 
-4. **Additional Security**
-   - WAF integration
-   - GuardDuty threat detection
-   - Config compliance rules
+### Resource Efficiency
+- **Right-Sizing**: BOM-driven instance sizing
+- **Spot Instances**: Optional for non-critical workloads
+- **Reserved Instances**: Long-term cost savings
 
-### Automation Enhancements
-- Automated testing of infrastructure
-- Blue/green deployments
-- Canary releases
-- Infrastructure drift detection
+### Lifecycle Management
+- **Automated Cleanup**: Old backup retention policies
+- **Resource Tagging**: Cost allocation and tracking
+- **Usage Monitoring**: CloudWatch cost metrics
+
+## Compliance and Governance
+
+### Change Management
+- **BOM Approval**: All changes require BOM updates
+- **Manual Approval**: GitHub Environments for deployment gates
+- **Audit Trail**: Complete deployment history
+
+### Security Compliance
+- **Encryption**: Data at rest and in transit
+- **Access Logging**: All access attempts logged
+- **Least Privilege**: Minimal required permissions
+
+### Operational Excellence
+- **Infrastructure as Code**: All resources defined in templates
+- **Version Control**: Complete change history
+- **Automated Testing**: BOM validation and syntax checking

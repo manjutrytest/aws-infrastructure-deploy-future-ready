@@ -1,0 +1,510 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Network Foundation - Immutable network infrastructure (VPC, Subnets, Gateways)'
+
+Parameters:
+  Customer:
+    Type: String
+    Description: Customer name
+    
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    AllowedValues: [dev, staging, prod]
+    
+  VpcCidr:
+    Type: String
+    Description: VPC CIDR block
+    Default: '10.0.0.0/16'
+    
+  AvailabilityZoneCount:
+    Type: Number
+    Description: Number of Availability Zones to use
+    Default: 2
+    MinValue: 2
+    MaxValue: 3
+    
+  CreatePublicSubnets:
+    Type: String
+    Description: Create public subnets
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    
+  CreatePrivateSubnets:
+    Type: String
+    Description: Create private subnets
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    
+  NatGatewayType:
+    Type: String
+    Description: NAT Gateway configuration
+    Default: 'single'
+    AllowedValues: ['none', 'single', 'per-az']
+
+Conditions:
+  CreatePublicSubnetsCondition: !Equals [!Ref CreatePublicSubnets, 'true']
+  CreatePrivateSubnetsCondition: !Equals [!Ref CreatePrivateSubnets, 'true']
+  CreateNatGateway: !Not [!Equals [!Ref NatGatewayType, 'none']]
+  CreateSingleNatGateway: !Equals [!Ref NatGatewayType, 'single']
+  CreatePerAzNatGateway: !Equals [!Ref NatGatewayType, 'per-az']
+  Use3AZs: !Equals [!Ref AvailabilityZoneCount, 3]
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-vpc'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-igw'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+    DeletionPolicy: Retain
+
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 6, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-public-subnet-1'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 6, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-public-subnet-2'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: !And [CreatePublicSubnetsCondition, Use3AZs]
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 6, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-public-subnet-3'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 6, 8]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-subnet-1'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [4, !Cidr [!Ref VpcCidr, 6, 8]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-subnet-2'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: !And [CreatePrivateSubnetsCondition, Use3AZs]
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Select [5, !Cidr [!Ref VpcCidr, 6, 8]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-subnet-3'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # NAT Gateway EIPs
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateway
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-eip-1'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreatePerAzNatGateway
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-eip-2'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  NatGateway3EIP:
+    Type: AWS::EC2::EIP
+    Condition: !And [CreatePerAzNatGateway, Use3AZs]
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-eip-3'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  # NAT Gateways
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-gateway-1'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Condition: CreatePerAzNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-gateway-2'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Condition: !And [CreatePerAzNatGateway, Use3AZs]
+    Properties:
+      AllocationId: !GetAtt NatGateway3EIP.AllocationId
+      SubnetId: !Ref PublicSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-nat-gateway-3'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-public-rt'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    Condition: CreatePublicSubnetsCondition
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePublicSubnetsCondition
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: !And [CreatePublicSubnetsCondition, Use3AZs]
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+  # Private Route Tables
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-rt-1'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-rt-2'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [CreatePerAzNatGateway, !Ref NatGateway2, !Ref NatGateway1]
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateSubnetsCondition
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Condition: !And [CreatePrivateSubnetsCondition, Use3AZs]
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Customer}-${Environment}-private-rt-3'
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+    DeletionPolicy: Retain
+
+  DefaultPrivateRoute3:
+    Type: AWS::EC2::Route
+    Condition: !And [CreateNatGateway, Use3AZs]
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [CreatePerAzNatGateway, !Ref NatGateway3, !Ref NatGateway1]
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: !And [CreatePrivateSubnetsCondition, Use3AZs]
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      SubnetId: !Ref PrivateSubnet3
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${Customer}-${Environment}-VpcId'
+
+  VpcCidr:
+    Description: VPC CIDR
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${Customer}-${Environment}-VpcCidr'
+
+  PublicSubnet1Id:
+    Condition: CreatePublicSubnetsCondition
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PublicSubnet1Id'
+
+  PublicSubnet2Id:
+    Condition: CreatePublicSubnetsCondition
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PublicSubnet2Id'
+
+  PublicSubnet3Id:
+    Condition: !And [CreatePublicSubnetsCondition, Use3AZs]
+    Description: Public Subnet 3 ID
+    Value: !Ref PublicSubnet3
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PublicSubnet3Id'
+
+  PrivateSubnet1Id:
+    Condition: CreatePrivateSubnetsCondition
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PrivateSubnet1Id'
+
+  PrivateSubnet2Id:
+    Condition: CreatePrivateSubnetsCondition
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PrivateSubnet2Id'
+
+  PrivateSubnet3Id:
+    Condition: !And [CreatePrivateSubnetsCondition, Use3AZs]
+    Description: Private Subnet 3 ID
+    Value: !Ref PrivateSubnet3
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PrivateSubnet3Id'
+
+  PublicSubnets:
+    Condition: CreatePublicSubnetsCondition
+    Description: List of public subnet IDs
+    Value: !If 
+      - Use3AZs
+      - !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+      - !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PublicSubnets'
+
+  PrivateSubnets:
+    Condition: CreatePrivateSubnetsCondition
+    Description: List of private subnet IDs
+    Value: !If 
+      - Use3AZs
+      - !Join [',', [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+      - !Join [',', [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Export:
+      Name: !Sub '${Customer}-${Environment}-PrivateSubnets'

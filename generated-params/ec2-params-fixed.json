@@ -1,0 +1,54 @@
+[
+  {
+    "ParameterKey": "VPCStackName",
+    "ParameterValue": "dev-vpc"
+  },
+  {
+    "ParameterKey": "SubnetStackName", 
+    "ParameterValue": "dev-subnets"
+  },
+  {
+    "ParameterKey": "SecurityGroupStackName",
+    "ParameterValue": "dev-security-groups"
+  },
+  {
+    "ParameterKey": "InstanceName",
+    "ParameterValue": "WebServer1"
+  },
+  {
+    "ParameterKey": "OperatingSystem",
+    "ParameterValue": "Windows2022"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.medium"
+  },
+  {
+    "ParameterKey": "InstanceCount",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "SubnetType",
+    "ParameterValue": "public"
+  },
+  {
+    "ParameterKey": "RootVolumeSize",
+    "ParameterValue": "40"
+  },
+  {
+    "ParameterKey": "RootVolumeType",
+    "ParameterValue": "gp3"
+  },
+  {
+    "ParameterKey": "EnableSSM",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "KeyPairName",
+    "ParameterValue": "test"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  }
+]
