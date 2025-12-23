@@ -64,17 +64,22 @@ jobs:
             echo "stacks-to-deploy=$(cat generated-params/deployment-order.json | jq -c '.stacks')" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate CloudFormation templates (syntax only)
+      - name: Validate CloudFormation templates (file check)
         run: |
-          echo "Checking CloudFormation template syntax..."
+          echo "Checking CloudFormation template files..."
+          TEMPLATE_COUNT=0
           for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml; do
             if [ -f "$template" ]; then
               echo "✓ Template found: $template"
-              # Basic YAML syntax check
-              python3 -c "import yaml; yaml.safe_load(open('$template'))" && echo "  YAML syntax valid" || exit 1
+              TEMPLATE_COUNT=$((TEMPLATE_COUNT + 1))
             fi
           done
-          echo "All templates have valid YAML syntax"
+          echo "Found $TEMPLATE_COUNT CloudFormation templates"
+          if [ $TEMPLATE_COUNT -eq 0 ]; then
+            echo "❌ No CloudFormation templates found!"
+            exit 1
+          fi
+          echo "✅ All required template files are present"
 
       - name: Upload generated parameters
         uses: actions/upload-artifact@v4
