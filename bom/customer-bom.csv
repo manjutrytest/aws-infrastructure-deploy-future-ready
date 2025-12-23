@@ -1,5 +1,5 @@
 resource_type,service_name,instance_id,template,dependency,vpc_cidr,az_count,create_public_subnets,create_private_subnets,nat_gateway_type,service_type,os_type,instance_family,instance_size,instance_count,subnet_selection,root_volume_size,enable_ssm,description
-network,network-foundation,001,network-foundation.yml,,10.1.0.0/16,2,true,true,single,,,,,,,,,Network foundation with VPC and subnets
-service,compute-web,001,compute-web.yml,network-foundation,,,,,,,web,linux,t3,small,1,public,20,true,Web server in public subnet
-service,compute-database,001,compute-database.yml,network-foundation,,,,,,,database,linux,t3,medium,1,private,30,true,Database server in private subnet
-service,compute-bastion,001,compute-bastion.yml,network-foundation,,,,,,,bastion,linux,t3,micro,1,public,10,true,Bastion host for secure access
+network,network-foundation,001,network-foundation.yml,,10.1.0.0/16,2,true,true,single,network,linux,,,,,,,Network foundation with VPC and subnets
+service,compute-web,001,compute-web.yml,network-foundation,,,,,,web,linux,t3,small,1,public,20,true,Web server in public subnet
+service,compute-database,001,compute-database.yml,network-foundation,,,,,,database,linux,t3,medium,1,private,30,true,Database server in private subnet
+service,compute-bastion,001,compute-bastion.yml,network-foundation,,,,,,bastion,linux,t3,micro,1,public,10,true,Bastion host for secure access
