@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GitHub deployment role using existing OIDC provider'
+
+Parameters:
+  GitHubOrganization:
+    Type: String
+    Description: GitHub organization or username
+    Default: 'manjutrytest'
+  
+  RepositoryName:
+    Type: String
+    Description: GitHub repository name
+    Default: 'aws-infrastructure-deploy-future-ready'
+  
+  Environment:
+    Type: String
+    Description: Environment (dev/prod)
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'GitHubDeploy-${Environment}-Role-${GitHubOrganization}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: 'arn:aws:iam::821706771879:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com'
+              StringLike:
+                'token.actions.githubusercontent.com:sub': 
+                  - !Sub 'repo:${GitHubOrganization}/${RepositoryName}:environment:${Environment}'
+                  - !Sub 'repo:${GitHubOrganization}/${RepositoryName}:ref:refs/heads/main'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: CloudFormationDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:PassRole
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:GetInstanceProfile
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'GitHubDeploy-${Environment}-Role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: GitHub Actions Deployment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  GitHubDeployRoleArn:
+    Description: ARN of the GitHub deployment role
+    Value: !GetAtt GitHubDeployRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubDeployRoleArn'
+  
+  GitHubDeployRoleName:
+    Description: Name of the GitHub deployment role
+    Value: !Ref GitHubDeployRole
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubDeployRoleName'

@@ -95,7 +95,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-dev-Role
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-dev-Role-manjutrytest
           role-session-name: GitHubActions-Dev-Deploy
           aws-region: ${{ env.AWS_REGION }}
 
@@ -166,7 +166,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-prod-Role
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-prod-Role-manjutrytest
           role-session-name: GitHubActions-Prod-Deploy
           aws-region: ${{ env.AWS_REGION }}
 
