@@ -1,0 +1,225 @@
+name: Deploy AWS Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: 'Deployment action'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+      stack_filter:
+        description: 'Deploy specific stack (optional)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      deployment-order: ${{ steps.parse-csv.outputs.deployment-order }}
+      stacks-to-deploy: ${{ steps.parse-csv.outputs.stacks-to-deploy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Parse CSV configuration
+        id: parse-csv
+        run: |
+          chmod +x scripts/parse-csv.sh
+          ./scripts/parse-csv.sh config/customer.csv ${{ github.event.inputs.environment }}
+          
+          # Output deployment order for next job
+          echo "deployment-order=$(cat generated-params/deployment-order.json | jq -c .)" >> $GITHUB_OUTPUT
+          
+          # Filter stacks if specific stack requested
+          if [ -n "${{ github.event.inputs.stack_filter }}" ]; then
+            FILTERED_STACKS=$(cat generated-params/deployment-order.json | jq -c --arg filter "${{ github.event.inputs.stack_filter }}" '.stacks | map(select(.name == $filter))')
+            echo "stacks-to-deploy=$FILTERED_STACKS" >> $GITHUB_OUTPUT
+          else
+            echo "stacks-to-deploy=$(cat generated-params/deployment-order.json | jq -c '.stacks')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate CloudFormation templates
+        run: |
+          for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml; do
+            if [ -f "$template" ]; then
+              echo "Validating $template..."
+              aws cloudformation validate-template --template-body file://$template --region ${{ env.AWS_REGION }} || exit 1
+            fi
+          done
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Upload generated parameters
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-params-${{ github.event.inputs.environment }}
+          path: generated-params/
+
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event.inputs.environment == 'dev'
+    environment: development
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-dev-Role
+          role-session-name: GitHubActions-Dev-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download generated parameters
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-params-${{ github.event.inputs.environment }}
+          path: generated-params/
+
+      - name: Deploy infrastructure stacks
+        run: |
+          STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+          echo "$STACKS" | jq -r '.[] | select(.enabled == true) | .name' | while read stack_name; do
+            STACK_INFO=$(echo "$STACKS" | jq -r --arg name "$stack_name" '.[] | select(.name == $name)')
+            TEMPLATE=$(echo "$STACK_INFO" | jq -r '.template')
+            PARAMS_FILE=$(echo "$STACK_INFO" | jq -r '.parameters')
+            
+            echo "Deploying stack: $stack_name"
+            echo "Template: $TEMPLATE"
+            echo "Parameters: $PARAMS_FILE"
+            
+            STACK_NAME="${{ github.event.inputs.environment }}-$stack_name"
+            
+            if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+              aws cloudformation deploy \
+                --template-file "$TEMPLATE" \
+                --stack-name "$STACK_NAME" \
+                --parameter-overrides file://"$PARAMS_FILE" \
+                --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+                --tags Environment=${{ github.event.inputs.environment }} ManagedBy=GitHubActions \
+                --region ${{ env.AWS_REGION }}
+            elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+              aws cloudformation delete-stack \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+              
+              aws cloudformation wait stack-delete-complete \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+            fi
+            
+            echo "Stack $stack_name completed"
+          done
+
+      - name: Output deployment results
+        run: |
+          echo "## Deployment Results" >> $GITHUB_STEP_SUMMARY
+          echo "Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "Region: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+            echo "### Deployed Stacks" >> $GITHUB_STEP_SUMMARY
+            STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+            echo "$STACKS" | jq -r '.[] | select(.enabled == true) | "- " + .name' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event.inputs.environment == 'prod'
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-prod-Role
+          role-session-name: GitHubActions-Prod-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download generated parameters
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-params-${{ github.event.inputs.environment }}
+          path: generated-params/
+
+      - name: Deploy infrastructure stacks
+        run: |
+          STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+          echo "$STACKS" | jq -r '.[] | select(.enabled == true) | .name' | while read stack_name; do
+            STACK_INFO=$(echo "$STACKS" | jq -r --arg name "$stack_name" '.[] | select(.name == $name)')
+            TEMPLATE=$(echo "$STACK_INFO" | jq -r '.template')
+            PARAMS_FILE=$(echo "$STACK_INFO" | jq -r '.parameters')
+            
+            echo "Deploying stack: $stack_name"
+            echo "Template: $TEMPLATE"
+            echo "Parameters: $PARAMS_FILE"
+            
+            STACK_NAME="${{ github.event.inputs.environment }}-$stack_name"
+            
+            if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+              aws cloudformation deploy \
+                --template-file "$TEMPLATE" \
+                --stack-name "$STACK_NAME" \
+                --parameter-overrides file://"$PARAMS_FILE" \
+                --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+                --tags Environment=${{ github.event.inputs.environment }} ManagedBy=GitHubActions \
+                --region ${{ env.AWS_REGION }}
+            elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+              aws cloudformation delete-stack \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+              
+              aws cloudformation wait stack-delete-complete \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+            fi
+            
+            echo "Stack $stack_name completed"
+          done
+
+      - name: Output deployment results
+        run: |
+          echo "## Production Deployment Results" >> $GITHUB_STEP_SUMMARY
+          echo "Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "Region: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+            echo "### Deployed Stacks" >> $GITHUB_STEP_SUMMARY
+            STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+            echo "$STACKS" | jq -r '.[] | select(.enabled == true) | "- " + .name' >> $GITHUB_STEP_SUMMARY
+          fi

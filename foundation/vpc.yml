@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC Foundation Stack - Single source of truth for network foundation'
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Description: CIDR block for the VPC
+    Default: '10.0.0.0/16'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+  
+  AvailabilityZoneCount:
+    Type: Number
+    Description: Number of Availability Zones to use
+    Default: 2
+    MinValue: 2
+    MaxValue: 4
+  
+  EnableDnsHostnames:
+    Type: String
+    Description: Enable DNS hostnames in the VPC
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  EnableDnsSupport:
+    Type: String
+    Description: Enable DNS support in the VPC
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - prod
+
+Conditions:
+  EnableDnsHostnamesCondition: !Equals [!Ref EnableDnsHostnames, 'true']
+  EnableDnsSupportCondition: !Equals [!Ref EnableDnsSupport, 'true']
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: !If [EnableDnsHostnamesCondition, true, false]
+      EnableDnsSupport: !If [EnableDnsSupportCondition, true, false]
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-vpc'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Purpose
+          Value: Foundation VPC
+
+  # VPC Flow Logs for security and monitoring
+  VPCFlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: '*'
+
+  VPCFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/flowlogs/${Environment}'
+      RetentionInDays: 30
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: !Ref VPC
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref VPCFlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt VPCFlowLogRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-vpc-flowlog'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCId'
+  
+  VPCCidr:
+    Description: VPC CIDR block
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCCidr'
+  
+  AvailabilityZones:
+    Description: List of Availability Zones used
+    Value: !Join
+      - ','
+      - - !Select [0, !GetAZs '']
+        - !Select [1, !GetAZs '']
+    Export:
+      Name: !Sub '${AWS::StackName}-AvailabilityZones'
+  
+  AvailabilityZone1:
+    Description: First Availability Zone
+    Value: !Select [0, !GetAZs '']
+    Export:
+      Name: !Sub '${AWS::StackName}-AvailabilityZone1'
+  
+  AvailabilityZone2:
+    Description: Second Availability Zone
+    Value: !Select [1, !GetAZs '']
+    Export:
+      Name: !Sub '${AWS::StackName}-AvailabilityZone2'
+  
+  Environment:
+    Description: Environment name
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-Environment'

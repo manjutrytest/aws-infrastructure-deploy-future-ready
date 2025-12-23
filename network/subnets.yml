@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Subnet configuration for public and private subnets'
+
+Parameters:
+  VPCStackName:
+    Type: String
+    Description: Name of the VPC stack
+    Default: 'dev-vpc'
+  
+  PublicSubnetCount:
+    Type: Number
+    Description: Number of public subnets to create
+    Default: 2
+    MinValue: 0
+    MaxValue: 4
+  
+  PrivateSubnetCount:
+    Type: Number
+    Description: Number of private subnets to create
+    Default: 2
+    MinValue: 0
+    MaxValue: 4
+  
+  SubnetCidrs:
+    Type: CommaDelimitedList
+    Description: CIDR blocks for subnets (public first, then private)
+    Default: '10.0.1.0/24,10.0.2.0/24,10.0.10.0/24,10.0.11.0/24'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+
+Conditions:
+  CreatePublicSubnet1: !Not [!Equals [!Ref PublicSubnetCount, 0]]
+  CreatePublicSubnet2: !And [!Not [!Equals [!Ref PublicSubnetCount, 0]], !Not [!Equals [!Ref PublicSubnetCount, 1]]]
+  CreatePrivateSubnet1: !Not [!Equals [!Ref PrivateSubnetCount, 0]]
+  CreatePrivateSubnet2: !And [!Not [!Equals [!Ref PrivateSubnetCount, 0]], !Not [!Equals [!Ref PrivateSubnetCount, 1]]]
+
+Resources:
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePublicSubnet1
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VPCStackName}-VPCId'
+      CidrBlock: !Select [0, !Ref SubnetCidrs]
+      AvailabilityZone:
+        Fn::ImportValue: !Sub '${VPCStackName}-AvailabilityZone1'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-public-subnet-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePublicSubnet2
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VPCStackName}-VPCId'
+      CidrBlock: !Select [1, !Ref SubnetCidrs]
+      AvailabilityZone:
+        Fn::ImportValue: !Sub '${VPCStackName}-AvailabilityZone2'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-public-subnet-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnet1
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VPCStackName}-VPCId'
+      CidrBlock: !Select [2, !Ref SubnetCidrs]
+      AvailabilityZone:
+        Fn::ImportValue: !Sub '${VPCStackName}-AvailabilityZone1'
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-private-subnet-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateSubnet2
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VPCStackName}-VPCId'
+      CidrBlock: !Select [3, !Ref SubnetCidrs]
+      AvailabilityZone:
+        Fn::ImportValue: !Sub '${VPCStackName}-AvailabilityZone2'
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-private-subnet-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  PublicSubnet1Id:
+    Condition: CreatePublicSubnet1
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet1Id'
+  
+  PublicSubnet2Id:
+    Condition: CreatePublicSubnet2
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet2Id'
+  
+  PrivateSubnet1Id:
+    Condition: CreatePrivateSubnet1
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1Id'
+  
+  PrivateSubnet2Id:
+    Condition: CreatePrivateSubnet2
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2Id'
+  
+  PublicSubnets:
+    Description: List of public subnet IDs
+    Value: !Join
+      - ','
+      - - !If [CreatePublicSubnet1, !Ref PublicSubnet1, !Ref 'AWS::NoValue']
+        - !If [CreatePublicSubnet2, !Ref PublicSubnet2, !Ref 'AWS::NoValue']
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnets'
+  
+  PrivateSubnets:
+    Description: List of private subnet IDs
+    Value: !Join
+      - ','
+      - - !If [CreatePrivateSubnet1, !Ref PrivateSubnet1, !Ref 'AWS::NoValue']
+        - !If [CreatePrivateSubnet2, !Ref PrivateSubnet2, !Ref 'AWS::NoValue']
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnets'

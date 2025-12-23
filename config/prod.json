@@ -1,0 +1,16 @@
+{
+  "Environment": "prod",
+  "StackPrefix": "prod",
+  "Tags": {
+    "Environment": "Production",
+    "Project": "AWS-Infrastructure",
+    "ManagedBy": "CloudFormation",
+    "CostCenter": "Production"
+  },
+  "Parameters": {
+    "EnableDetailedMonitoring": true,
+    "BackupRetentionDays": 30,
+    "EnableEncryption": true,
+    "LogRetentionDays": 90
+  }
+}

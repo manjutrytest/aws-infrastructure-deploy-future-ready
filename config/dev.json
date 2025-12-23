@@ -1,0 +1,16 @@
+{
+  "Environment": "dev",
+  "StackPrefix": "dev",
+  "Tags": {
+    "Environment": "Development",
+    "Project": "AWS-Infrastructure",
+    "ManagedBy": "CloudFormation",
+    "CostCenter": "Development"
+  },
+  "Parameters": {
+    "EnableDetailedMonitoring": false,
+    "BackupRetentionDays": 7,
+    "EnableEncryption": true,
+    "LogRetentionDays": 30
+  }
+}

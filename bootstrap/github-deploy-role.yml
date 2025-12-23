@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GitHub deployment role with OIDC authentication and least privilege permissions'
+
+Parameters:
+  OIDCProviderStackName:
+    Type: String
+    Description: Name of the OIDC Provider stack
+    Default: 'github-oidc-provider'
+  
+  Environment:
+    Type: String
+    Description: Environment (dev/prod)
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'GitHubDeploy-${Environment}-Role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: 
+                Fn::ImportValue: !Sub '${OIDCProviderStackName}-OIDCProviderArn'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com'
+              StringLike:
+                'token.actions.githubusercontent.com:sub': 
+                  - !Sub 
+                    - 'repo:${GitHubOrg}/${RepoName}:environment:${Environment}'
+                    - GitHubOrg: 
+                        Fn::ImportValue: !Sub '${OIDCProviderStackName}-GitHubOrganization'
+                      RepoName:
+                        Fn::ImportValue: !Sub '${OIDCProviderStackName}-RepositoryName'
+                  - !Sub 
+                    - 'repo:${GitHubOrg}/${RepoName}:ref:refs/heads/main'
+                    - GitHubOrg: 
+                        Fn::ImportValue: !Sub '${OIDCProviderStackName}-GitHubOrganization'
+                      RepoName:
+                        Fn::ImportValue: !Sub '${OIDCProviderStackName}-RepositoryName'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: CloudFormationDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:PassRole
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:GetInstanceProfile
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::aws-cloudformation-templates-${AWS::Region}'
+                  - !Sub 'arn:aws:s3:::aws-cloudformation-templates-${AWS::Region}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'GitHubDeploy-${Environment}-Role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: GitHub Actions Deployment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  GitHubDeployRoleArn:
+    Description: ARN of the GitHub deployment role
+    Value: !GetAtt GitHubDeployRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubDeployRoleArn'
+  
+  GitHubDeployRoleName:
+    Description: Name of the GitHub deployment role
+    Value: !Ref GitHubDeployRole
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubDeployRoleName'

@@ -1,0 +1,278 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 instances with configurable operating systems and instance types'
+
+Parameters:
+  VPCStackName:
+    Type: String
+    Description: Name of the VPC stack
+    Default: 'dev-vpc'
+  
+  SubnetStackName:
+    Type: String
+    Description: Name of the subnet stack
+    Default: 'dev-subnets'
+  
+  SecurityGroupStackName:
+    Type: String
+    Description: Name of the security group stack
+    Default: 'dev-security-groups'
+  
+  InstanceName:
+    Type: String
+    Description: Name of the EC2 instance
+    Default: 'WebServer1'
+  
+  OperatingSystem:
+    Type: String
+    Description: Operating system for the instance
+    Default: 'Windows2022'
+    AllowedValues:
+      - AmazonLinux2
+      - AmazonLinux2023
+      - Ubuntu2004
+      - Ubuntu2204
+      - RHEL8
+      - RHEL9
+      - Windows2019
+      - Windows2022
+  
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: 't3.medium'
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3a.micro
+      - t3a.small
+      - t3a.medium
+      - t3a.large
+      - t3a.xlarge
+      - m5.large
+      - m5.xlarge
+      - m6i.large
+      - m6i.xlarge
+      - c5.large
+      - c5.xlarge
+      - r5.large
+      - r5.xlarge
+  
+  InstanceCount:
+    Type: Number
+    Description: Number of instances to launch
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+  
+  SubnetType:
+    Type: String
+    Description: Subnet type for instance placement
+    Default: 'public'
+    AllowedValues:
+      - public
+      - private
+  
+  RootVolumeSize:
+    Type: Number
+    Description: Root volume size in GB
+    Default: 40
+    MinValue: 8
+    MaxValue: 1000
+  
+  RootVolumeType:
+    Type: String
+    Description: Root volume type
+    Default: 'gp3'
+    AllowedValues:
+      - gp2
+      - gp3
+      - io1
+      - io2
+  
+  EnableSSM:
+    Type: String
+    Description: Enable AWS Systems Manager
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  KeyPairName:
+    Type: String
+    Description: EC2 Key Pair name for SSH/RDP access
+    Default: 'my-keypair'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+
+Mappings:
+  AmiMap:
+    us-east-1:
+      AmazonLinux2: ami-0abcdef1234567890
+      AmazonLinux2023: ami-0abcdef1234567891
+      Ubuntu2004: ami-0abcdef1234567892
+      Ubuntu2204: ami-0abcdef1234567893
+      RHEL8: ami-0abcdef1234567894
+      RHEL9: ami-0abcdef1234567895
+      Windows2019: ami-0abcdef1234567896
+      Windows2022: ami-0abcdef1234567897
+    us-west-2:
+      AmazonLinux2: ami-0abcdef1234567890
+      AmazonLinux2023: ami-0abcdef1234567891
+      Ubuntu2004: ami-0abcdef1234567892
+      Ubuntu2204: ami-0abcdef1234567893
+      RHEL8: ami-0abcdef1234567894
+      RHEL9: ami-0abcdef1234567895
+      Windows2019: ami-0abcdef1234567896
+      Windows2022: ami-0abcdef1234567897
+    ap-south-1:
+      AmazonLinux2: ami-0d13e3e640877b0b9
+      AmazonLinux2023: ami-0f58b397bc5c1f2e8
+      Ubuntu2004: ami-0a7cf821b91bcccbc
+      Ubuntu2204: ami-0f5ee92e2d63afc18
+      RHEL8: ami-0e6329e222e662a52
+      RHEL9: ami-0f3c7d07486cad139
+      Windows2019: ami-0c956e207f9d113d5
+      Windows2022: ami-0d13e3e640877b0b9
+
+Conditions:
+  EnableSSMCondition: !Equals [!Ref EnableSSM, 'true']
+  IsWindowsOS: !Or
+    - !Equals [!Ref OperatingSystem, 'Windows2019']
+    - !Equals [!Ref OperatingSystem, 'Windows2022']
+  UsePublicSubnet: !Equals [!Ref SubnetType, 'public']
+  UsePrivateSubnet: !Equals [!Ref SubnetType, 'private']
+
+Resources:
+  # IAM Role for EC2 instances (for SSM and other AWS services)
+  EC2Role:
+    Type: AWS::IAM::Role
+    Condition: EnableSSMCondition
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-ec2-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: EnableSSMCondition
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # Launch Template for consistent instance configuration
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${Environment}-${InstanceName}-template'
+      LaunchTemplateData:
+        ImageId: !FindInMap [AmiMap, !Ref 'AWS::Region', !Ref OperatingSystem]
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !If [EnableSSMCondition, !GetAtt EC2InstanceProfile.Arn, !Ref 'AWS::NoValue']
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub '${SecurityGroupStackName}-WebSecurityGroupId'
+        BlockDeviceMappings:
+          - DeviceName: !If [IsWindowsOS, '/dev/sda1', '/dev/xvda']
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: !Ref RootVolumeType
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            ${!If [IsWindowsOS, '<powershell>', '#!/bin/bash']}
+            ${!If [IsWindowsOS, 'Write-Host "Windows instance starting..."', 'echo "Linux instance starting..."']}
+            ${!If [IsWindowsOS, 'Install-WindowsFeature -name Web-Server -IncludeManagementTools', 'yum update -y']}
+            ${!If [IsWindowsOS, '</powershell>', '']}
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${Environment}-${InstanceName}'
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: ManagedBy
+                Value: CloudFormation
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub '${Environment}-${InstanceName}-volume'
+              - Key: Environment
+                Value: !Ref Environment
+
+  # Auto Scaling Group for managing instance count
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${Environment}-${InstanceName}-asg'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref InstanceCount
+      MaxSize: !Ref InstanceCount
+      DesiredCapacity: !Ref InstanceCount
+      VPCZoneIdentifier:
+        - !If
+          - UsePublicSubnet
+          - Fn::ImportValue: !Sub '${SubnetStackName}-PublicSubnet1Id'
+          - Fn::ImportValue: !Sub '${SubnetStackName}-PrivateSubnet1Id'
+        - !If
+          - UsePublicSubnet
+          - Fn::ImportValue: !Sub '${SubnetStackName}-PublicSubnet2Id'
+          - Fn::ImportValue: !Sub '${SubnetStackName}-PrivateSubnet2Id'
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-${InstanceName}-asg'
+          PropagateAtLaunch: false
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+        - Key: ManagedBy
+          Value: CloudFormation
+          PropagateAtLaunch: true
+
+Outputs:
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref LaunchTemplate
+    Export:
+      Name: !Sub '${AWS::StackName}-LaunchTemplateId'
+  
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AutoScalingGroupName'
+  
+  InstanceType:
+    Description: Instance type used
+    Value: !Ref InstanceType
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceType'
+  
+  OperatingSystem:
+    Description: Operating system used
+    Value: !Ref OperatingSystem
+    Export:
+      Name: !Sub '${AWS::StackName}-OperatingSystem'

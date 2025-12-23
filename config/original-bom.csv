@@ -1,0 +1,4 @@
+Service Name,Region,Description / Configuration,Upfront Cost (USD),Monthly Cost (USD),Annual Cost (USD)
+Amazon EC2,Asia Pacific (Hyderabad),"t3.medium, Windows Server, 1 Instance, On-Demand, EBS 40 gb",0,139.53,1674.36
+Amazon VPC (Public IPv4),Asia Pacific (Hyderabad),1 In-use Public IPv4 Address,0,3.65,43.8
+,,,0,0.11,1.32

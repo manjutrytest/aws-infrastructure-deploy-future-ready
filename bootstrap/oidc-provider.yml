@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GitHub OIDC Provider for secure GitHub Actions authentication'
+
+Parameters:
+  GitHubOrganization:
+    Type: String
+    Description: GitHub organization or username
+    Default: 'your-github-org'
+  
+  RepositoryName:
+    Type: String
+    Description: GitHub repository name
+    Default: 'aws-infra'
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCIdentityProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Name
+          Value: GitHubOIDCProvider
+        - Key: Purpose
+          Value: GitHub Actions Authentication
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  OIDCProviderArn:
+    Description: ARN of the GitHub OIDC Provider
+    Value: !Ref GitHubOIDCProvider
+    Export:
+      Name: !Sub '${AWS::StackName}-OIDCProviderArn'
+  
+  GitHubOrganization:
+    Description: GitHub organization
+    Value: !Ref GitHubOrganization
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubOrganization'
+  
+  RepositoryName:
+    Description: Repository name
+    Value: !Ref RepositoryName
+    Export:
+      Name: !Sub '${AWS::StackName}-RepositoryName'
