@@ -100,9 +100,18 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-dev-Role-manjutrytest
+          role-to-assume: arn:aws:iam::821706771879:role/GitHubDeploy-dev-Permissive-manjutrytest
           role-session-name: GitHubActions-Dev-Deploy
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Debug OIDC Token Claims
+        run: |
+          echo "GitHub Context Debug:"
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Expected role ARN: arn:aws:iam::821706771879:role/GitHubDeploy-dev-Permissive-manjutrytest"
 
       - name: Download generated parameters
         uses: actions/download-artifact@v4
@@ -182,7 +191,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubDeploy-prod-Role-manjutrytest
+          role-to-assume: arn:aws:iam::821706771879:role/GitHubDeploy-prod-Role-manjutrytest
           role-session-name: GitHubActions-Prod-Deploy
           aws-region: ${{ env.AWS_REGION }}
 
