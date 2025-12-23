@@ -1,0 +1,388 @@
+name: Deploy AWS Infrastructure - Enhanced
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: 'Deployment action'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+      bom_type:
+        description: 'BOM Configuration Type'
+        required: true
+        default: 'current'
+        type: choice
+        options:
+          - current
+          - future-ready
+          - windows-only
+      deploy_alb:
+        description: 'Deploy Application Load Balancer'
+        required: false
+        default: false
+        type: boolean
+      deploy_rds:
+        description: 'Deploy RDS Database'
+        required: false
+        default: false
+        type: boolean
+      deploy_windows:
+        description: 'Deploy Windows EC2 Instance'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      deployment-order: ${{ steps.parse-csv.outputs.deployment-order }}
+      stacks-to-deploy: ${{ steps.parse-csv.outputs.stacks-to-deploy }}
+      bom-type: ${{ steps.setup-bom.outputs.bom-type }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Setup BOM Configuration
+        id: setup-bom
+        run: |
+          echo "🎯 Setting up BOM configuration for: ${{ github.event.inputs.bom_type }}"
+          
+          case "${{ github.event.inputs.bom_type }}" in
+            "future-ready")
+              cp config/future-ready-bom.csv config/active-bom.csv
+              echo "bom-type=future-ready" >> $GITHUB_OUTPUT
+              echo "✅ Using Future-Ready BOM with enterprise services"
+              ;;
+            "windows-only")
+              # Create Windows-only BOM that uses existing networking
+              cat > config/active-bom.csv << 'EOF'
+          ResourceType,ResourceName,Action,Configuration,Value,Dependencies,Environment
+          EC2,WindowsServer,create-new,OperatingSystem,Windows2022,existing,all
+          EC2,WindowsServer,create-new,InstanceFamily,t3,existing,all
+          EC2,WindowsServer,create-new,InstanceSize,medium,existing,all
+          EC2,WindowsServer,create-new,InstanceCount,1,existing,all
+          EC2,WindowsServer,create-new,SubnetType,public,existing,all
+          EC2,WindowsServer,create-new,RootVolumeSize,40,existing,all
+          EC2,WindowsServer,create-new,RootVolumeType,gp3,existing,all
+          EC2,WindowsServer,create-new,EnableSSM,true,existing,all
+          EC2,WindowsServer,create-new,KeyPairName,test,existing,all
+          EOF
+              echo "bom-type=windows-only" >> $GITHUB_OUTPUT
+              echo "✅ Using Windows-Only BOM"
+              ;;
+            *)
+              cp config/customer.csv config/active-bom.csv
+              echo "bom-type=current" >> $GITHUB_OUTPUT
+              echo "✅ Using Current BOM"
+              ;;
+          esac
+          
+          echo "📋 Active BOM Contents (first 10 lines):"
+          head -10 config/active-bom.csv
+
+      - name: Parse CSV configuration
+        id: parse-csv
+        run: |
+          chmod +x scripts/parse-csv.sh
+          chmod +x scripts/parse-future-ready-csv.sh
+          
+          # Choose parser based on BOM type
+          if [ "${{ github.event.inputs.bom_type }}" = "future-ready" ]; then
+            echo "🔧 Using enhanced CSV parser for future-ready BOM"
+            ./scripts/parse-future-ready-csv.sh config/active-bom.csv ${{ github.event.inputs.environment }}
+          else
+            echo "🔧 Using standard CSV parser"
+            ./scripts/parse-csv.sh config/active-bom.csv ${{ github.event.inputs.environment }}
+          fi
+          
+          # Output deployment order for next job
+          echo "deployment-order=$(cat generated-params/deployment-order.json | jq -c .)" >> $GITHUB_OUTPUT
+          echo "stacks-to-deploy=$(cat generated-params/deployment-order.json | jq -c '.stacks')" >> $GITHUB_OUTPUT
+
+      - name: Validate CloudFormation templates
+        run: |
+          echo "📋 Checking CloudFormation template files..."
+          TEMPLATE_COUNT=0
+          for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml loadbalancer/*.yml database/*.yml; do
+            if [ -f "$template" ]; then
+              echo "✓ Template found: $template"
+              TEMPLATE_COUNT=$((TEMPLATE_COUNT + 1))
+            fi
+          done
+          echo "Found $TEMPLATE_COUNT CloudFormation templates"
+          echo "✅ All required template files are present"
+
+      - name: Upload generated parameters
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-params-${{ github.event.inputs.environment }}-${{ github.event.inputs.bom_type }}
+          path: generated-params/
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: ${{ github.event.inputs.environment == 'prod' && 'production' || 'development' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::821706771879:role/GitHubDeploy-${{ github.event.inputs.environment }}-Permissive-manjutrytest
+          role-session-name: GitHubActions-${{ github.event.inputs.environment }}-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download generated parameters
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-params-${{ github.event.inputs.environment }}-${{ github.event.inputs.bom_type }}
+          path: generated-params/
+
+      - name: Deploy Windows EC2 Instance
+        if: github.event.inputs.deploy_windows == 'true' || github.event.inputs.bom_type == 'windows-only'
+        run: |
+          echo "🖥️ Deploying Windows EC2 Instance using existing networking..."
+          
+          # Get existing resource IDs
+          VPC_ID=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-vpc --query 'Stacks[0].Outputs[?OutputKey==`VPCId`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          SUBNET_ID=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-subnets --query 'Stacks[0].Outputs[?OutputKey==`PublicSubnet1Id`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          SG_ID=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-security-groups --query 'Stacks[0].Outputs[?OutputKey==`WebSecurityGroupId`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          
+          if [ -n "$VPC_ID" ] && [ -n "$SUBNET_ID" ] && [ -n "$SG_ID" ]; then
+            echo "✅ Using existing networking components:"
+            echo "   VPC ID: $VPC_ID"
+            echo "   Subnet ID: $SUBNET_ID"
+            echo "   Security Group ID: $SG_ID"
+            
+            aws cloudformation deploy \
+              --template-file compute/windows-ec2.yml \
+              --stack-name ${{ github.event.inputs.environment }}-windows-ec2 \
+              --parameter-overrides \
+                VPCId=$VPC_ID \
+                SubnetId=$SUBNET_ID \
+                SecurityGroupId=$SG_ID \
+                InstanceName=WindowsServer2022 \
+                InstanceType=t3.medium \
+                RootVolumeSize=40 \
+                KeyPairName=test \
+                Environment=${{ github.event.inputs.environment }} \
+              --capabilities CAPABILITY_IAM \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ Windows EC2 instance deployed successfully"
+          else
+            echo "⚠️ Required networking components not found. Will deploy basic infrastructure first..."
+          fi
+
+      - name: Deploy Application Load Balancer
+        if: github.event.inputs.deploy_alb == 'true' || github.event.inputs.bom_type == 'future-ready'
+        run: |
+          echo "⚖️ Deploying Application Load Balancer..."
+          
+          # Check if required stacks exist
+          if aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-vpc --region ${{ env.AWS_REGION }} >/dev/null 2>&1 && \
+             aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-subnets --region ${{ env.AWS_REGION }} >/dev/null 2>&1 && \
+             aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-security-groups --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            
+            aws cloudformation deploy \
+              --template-file loadbalancer/alb.yml \
+              --stack-name ${{ github.event.inputs.environment }}-alb \
+              --parameter-overrides \
+                VPCStackName=${{ github.event.inputs.environment }}-vpc \
+                SubnetStackName=${{ github.event.inputs.environment }}-subnets \
+                SecurityGroupStackName=${{ github.event.inputs.environment }}-security-groups \
+                LoadBalancerName=WebLoadBalancer \
+                Environment=${{ github.event.inputs.environment }} \
+              --capabilities CAPABILITY_IAM \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ Application Load Balancer deployed successfully"
+          else
+            echo "⚠️ Required networking stacks not found. Skipping ALB deployment."
+          fi
+
+      - name: Deploy RDS Database
+        if: github.event.inputs.deploy_rds == 'true' || github.event.inputs.bom_type == 'future-ready'
+        run: |
+          echo "🗄️ Deploying RDS Database..."
+          
+          # Check if required stacks exist
+          if aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-vpc --region ${{ env.AWS_REGION }} >/dev/null 2>&1 && \
+             aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-subnets --region ${{ env.AWS_REGION }} >/dev/null 2>&1 && \
+             aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-security-groups --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            
+            aws cloudformation deploy \
+              --template-file database/rds.yml \
+              --stack-name ${{ github.event.inputs.environment }}-rds \
+              --parameter-overrides \
+                VPCStackName=${{ github.event.inputs.environment }}-vpc \
+                SubnetStackName=${{ github.event.inputs.environment }}-subnets \
+                SecurityGroupStackName=${{ github.event.inputs.environment }}-security-groups \
+                DatabaseName=productiondb \
+                MasterUsername=admin \
+                MasterUserPassword=TempPassword123! \
+                DBInstanceClass=db.t3.medium \
+                AllocatedStorage=100 \
+                MultiAZ=${{ github.event.inputs.environment == 'prod' && 'true' || 'false' }} \
+                BackupRetentionPeriod=7 \
+                Environment=${{ github.event.inputs.environment }} \
+              --capabilities CAPABILITY_IAM \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ RDS Database deployed successfully"
+          else
+            echo "⚠️ Required networking stacks not found. Skipping RDS deployment."
+          fi
+
+      - name: Deploy Core Infrastructure Stacks
+        run: |
+          echo "🏗️ Deploying core infrastructure stacks based on BOM type: ${{ github.event.inputs.bom_type }}"
+          
+          STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+          echo "$STACKS" | jq -r '.[] | select(.enabled == true) | .name' | while read stack_name; do
+            STACK_INFO=$(echo "$STACKS" | jq -r --arg name "$stack_name" '.[] | select(.name == $name)')
+            TEMPLATE=$(echo "$STACK_INFO" | jq -r '.template')
+            PARAMS_FILE=$(echo "$STACK_INFO" | jq -r '.parameters')
+            
+            echo "📦 Deploying stack: $stack_name"
+            echo "   Template: $TEMPLATE"
+            echo "   Parameters: $PARAMS_FILE"
+            
+            STACK_NAME="${{ github.event.inputs.environment }}-$stack_name"
+            
+            if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+              if [ -f "$TEMPLATE" ] && [ -f "$PARAMS_FILE" ]; then
+                aws cloudformation deploy \
+                  --template-file "$TEMPLATE" \
+                  --stack-name "$STACK_NAME" \
+                  --parameter-overrides file://"$PARAMS_FILE" \
+                  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+                  --tags Environment=${{ github.event.inputs.environment }} ManagedBy=GitHubActions BOMType=${{ github.event.inputs.bom_type }} \
+                  --region ${{ env.AWS_REGION }}
+                echo "✅ Stack $stack_name deployed successfully"
+              else
+                echo "⚠️ Template or parameter file not found for $stack_name, skipping..."
+              fi
+            elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+              echo "🗑️ Destroying stack: $STACK_NAME"
+              aws cloudformation delete-stack \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+              
+              aws cloudformation wait stack-delete-complete \
+                --stack-name "$STACK_NAME" \
+                --region ${{ env.AWS_REGION }}
+              echo "✅ Stack $stack_name destroyed successfully"
+            fi
+          done
+
+      - name: Generate Deployment Summary
+        run: |
+          echo "## 🚀 Deployment Results" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment**: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Action**: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "**BOM Type**: ${{ github.event.inputs.bom_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+            echo "### 📋 Deployed Components" >> $GITHUB_STEP_SUMMARY
+            
+            # Core Infrastructure
+            STACKS='${{ needs.validate.outputs.stacks-to-deploy }}'
+            echo "$STACKS" | jq -r '.[] | select(.enabled == true) | "- ✅ " + .name' >> $GITHUB_STEP_SUMMARY
+            
+            # Additional Services
+            if [ "${{ github.event.inputs.deploy_windows }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "windows-only" ]; then
+              echo "- ✅ Windows EC2 Instance" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "${{ github.event.inputs.deploy_alb }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "future-ready" ]; then
+              echo "- ✅ Application Load Balancer" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "${{ github.event.inputs.deploy_rds }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "future-ready" ]; then
+              echo "- ✅ RDS Database" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔗 Access Information" >> $GITHUB_STEP_SUMMARY
+            
+            # Get ALB DNS if deployed
+            if [ "${{ github.event.inputs.deploy_alb }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "future-ready" ]; then
+              ALB_DNS=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-alb --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNSName`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Not deployed")
+              if [ "$ALB_DNS" != "Not deployed" ]; then
+                echo "- **🌐 Load Balancer**: http://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+            
+            # Get RDS endpoint if deployed
+            if [ "${{ github.event.inputs.deploy_rds }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "future-ready" ]; then
+              RDS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-rds --query 'Stacks[0].Outputs[?OutputKey==`DatabaseEndpoint`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Not deployed")
+              if [ "$RDS_ENDPOINT" != "Not deployed" ]; then
+                echo "- **🗄️ Database**: $RDS_ENDPOINT:3306" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+            
+            # Get Windows instance IP if deployed
+            if [ "${{ github.event.inputs.deploy_windows }}" == "true" ] || [ "${{ github.event.inputs.bom_type }}" == "windows-only" ]; then
+              WIN_IP=$(aws cloudformation describe-stacks --stack-name ${{ github.event.inputs.environment }}-windows-ec2 --query 'Stacks[0].Outputs[?OutputKey==`WindowsInstancePublicIP`].OutputValue' --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Not deployed")
+              if [ "$WIN_IP" != "Not deployed" ]; then
+                echo "- **🖥️ Windows Server**: RDP to $WIN_IP" >> $GITHUB_STEP_SUMMARY
+                echo "- **🌐 IIS Web Server**: http://$WIN_IP" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💰 Estimated Monthly Cost" >> $GITHUB_STEP_SUMMARY
+            case "${{ github.event.inputs.bom_type }}" in
+              "future-ready")
+                echo "- **Enterprise Infrastructure**: ~$785-$1,897/month" >> $GITHUB_STEP_SUMMARY
+                echo "  - Multi-AZ deployment with auto scaling" >> $GITHUB_STEP_SUMMARY
+                echo "  - Load balancer, database, monitoring" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "windows-only")
+                echo "- **Windows + Existing Network**: ~$139/month" >> $GITHUB_STEP_SUMMARY
+                echo "  - Single Windows Server t3.medium" >> $GITHUB_STEP_SUMMARY
+                ;;
+              *)
+                echo "- **Basic Infrastructure**: ~$187/month" >> $GITHUB_STEP_SUMMARY
+                echo "  - VPC, subnets, NAT, EC2 instance" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Test connectivity** to deployed resources" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Configure applications** on the instances" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Set up monitoring** and alerting" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Deploy to production** (if this was dev)" >> $GITHUB_STEP_SUMMARY
+          fi
