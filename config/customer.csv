@@ -29,4 +29,4 @@ EC2,WebServer1,create-new,SubnetType,public,PublicSubnet1,all
 EC2,WebServer1,create-new,RootVolumeSize,40,WebSecurityGroup,all
 EC2,WebServer1,create-new,RootVolumeType,gp3,WebSecurityGroup,all
 EC2,WebServer1,create-new,EnableSSM,true,WebSecurityGroup,all
-EC2,WebServer1,create-new,KeyPairName,my-keypair,WebSecurityGroup,all
+EC2,WebServer1,create-new,KeyPairName,test,WebSecurityGroup,all

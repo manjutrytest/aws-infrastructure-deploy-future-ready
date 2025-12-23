@@ -102,8 +102,8 @@ Parameters:
   
   KeyPairName:
     Type: String
-    Description: EC2 Key Pair name for SSH/RDP access
-    Default: 'my-keypair'
+    Description: EC2 Key Pair name for SSH/RDP access (leave empty if none)
+    Default: ''
   
   Environment:
     Type: String
@@ -147,6 +147,7 @@ Conditions:
     - !Equals [!Ref OperatingSystem, 'Windows2022']
   UsePublicSubnet: !Equals [!Ref SubnetType, 'public']
   UsePrivateSubnet: !Equals [!Ref SubnetType, 'private']
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
 
 Resources:
   # IAM Role for EC2 instances (for SSM and other AWS services)
@@ -185,7 +186,7 @@ Resources:
       LaunchTemplateData:
         ImageId: !FindInMap [AmiMap, !Ref 'AWS::Region', !Ref OperatingSystem]
         InstanceType: !Ref InstanceType
-        KeyName: !Ref KeyPairName
+        KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
         IamInstanceProfile:
           Arn: !If [EnableSSMCondition, !GetAtt EC2InstanceProfile.Arn, !Ref 'AWS::NoValue']
         SecurityGroupIds:
