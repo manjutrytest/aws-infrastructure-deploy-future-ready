@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Application Load Balancer for web tier'
+
+Parameters:
+  VPCStackName:
+    Type: String
+    Description: Name of the VPC stack
+    Default: 'dev-vpc'
+  
+  SubnetStackName:
+    Type: String
+    Description: Name of the subnet stack
+    Default: 'dev-subnets'
+  
+  SecurityGroupStackName:
+    Type: String
+    Description: Name of the security group stack
+    Default: 'dev-security-groups'
+  
+  LoadBalancerName:
+    Type: String
+    Description: Name of the Application Load Balancer
+    Default: 'WebLoadBalancer'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+
+Resources:
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${Environment}-${LoadBalancerName}'
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets:
+        - Fn::ImportValue: !Sub '${SubnetStackName}-PublicSubnet1Id'
+        - Fn::ImportValue: !Sub '${SubnetStackName}-PublicSubnet2Id'
+      SecurityGroups:
+        - Fn::ImportValue: !Sub '${SecurityGroupStackName}-LoadBalancerSecurityGroupId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-${LoadBalancerName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${Environment}-web-targets'
+      Port: 80
+      Protocol: HTTP
+      VpcId:
+        Fn::ImportValue: !Sub '${VPCStackName}-VPCId'
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-web-targets'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # HTTPS Listener (requires SSL certificate)
+  # ALBListenerHTTPS:
+  #   Type: AWS::ElasticLoadBalancingV2::Listener
+  #   Properties:
+  #     DefaultActions:
+  #       - Type: forward
+  #         TargetGroupArn: !Ref ALBTargetGroup
+  #     LoadBalancerArn: !Ref ApplicationLoadBalancer
+  #     Port: 443
+  #     Protocol: HTTPS
+  #     Certificates:
+  #       - CertificateArn: !Ref SSLCertificate
+
+Outputs:
+  LoadBalancerArn:
+    Description: ARN of the Application Load Balancer
+    Value: !Ref ApplicationLoadBalancer
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadBalancerArn'
+  
+  LoadBalancerDNSName:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadBalancerDNSName'
+  
+  TargetGroupArn:
+    Description: ARN of the Target Group
+    Value: !Ref ALBTargetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-TargetGroupArn'
+  
+  LoadBalancerURL:
+    Description: URL of the Application Load Balancer
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'

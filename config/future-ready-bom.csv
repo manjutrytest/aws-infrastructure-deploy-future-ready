@@ -1,0 +1,160 @@
+ResourceType,ResourceName,Action,Configuration,Value,Dependencies,Environment
+# VPC Foundation - Multi-AZ, Production-Ready
+VPC,ProductionVPC,create-new,CIDR,10.0.0.0/16,,all
+VPC,ProductionVPC,create-new,AvailabilityZones,3,,all
+VPC,ProductionVPC,create-new,EnableDnsHostnames,true,,all
+VPC,ProductionVPC,create-new,EnableDnsSupport,true,,all
+VPC,ProductionVPC,create-new,EnableFlowLogs,true,,all
+# Public Subnets - Web Tier
+Subnet,PublicSubnet1,create-new,Type,public,ProductionVPC,all
+Subnet,PublicSubnet1,create-new,CIDR,10.0.1.0/24,ProductionVPC,all
+Subnet,PublicSubnet1,create-new,AvailabilityZone,0,ProductionVPC,all
+Subnet,PublicSubnet2,create-new,Type,public,ProductionVPC,all
+Subnet,PublicSubnet2,create-new,CIDR,10.0.2.0/24,ProductionVPC,all
+Subnet,PublicSubnet2,create-new,AvailabilityZone,1,ProductionVPC,all
+Subnet,PublicSubnet3,create-new,Type,public,ProductionVPC,all
+Subnet,PublicSubnet3,create-new,CIDR,10.0.3.0/24,ProductionVPC,all
+Subnet,PublicSubnet3,create-new,AvailabilityZone,2,ProductionVPC,all
+# Private Subnets - Application Tier
+Subnet,PrivateSubnet1,create-new,Type,private,ProductionVPC,all
+Subnet,PrivateSubnet1,create-new,CIDR,10.0.10.0/24,ProductionVPC,all
+Subnet,PrivateSubnet1,create-new,AvailabilityZone,0,ProductionVPC,all
+Subnet,PrivateSubnet2,create-new,Type,private,ProductionVPC,all
+Subnet,PrivateSubnet2,create-new,CIDR,10.0.11.0/24,ProductionVPC,all
+Subnet,PrivateSubnet2,create-new,AvailabilityZone,1,ProductionVPC,all
+Subnet,PrivateSubnet3,create-new,Type,private,ProductionVPC,all
+Subnet,PrivateSubnet3,create-new,CIDR,10.0.12.0/24,ProductionVPC,all
+Subnet,PrivateSubnet3,create-new,AvailabilityZone,2,ProductionVPC,all
+# Database Subnets - Data Tier
+Subnet,DatabaseSubnet1,create-new,Type,database,ProductionVPC,all
+Subnet,DatabaseSubnet1,create-new,CIDR,10.0.20.0/24,ProductionVPC,all
+Subnet,DatabaseSubnet1,create-new,AvailabilityZone,0,ProductionVPC,all
+Subnet,DatabaseSubnet2,create-new,Type,database,ProductionVPC,all
+Subnet,DatabaseSubnet2,create-new,CIDR,10.0.21.0/24,ProductionVPC,all
+Subnet,DatabaseSubnet2,create-new,AvailabilityZone,1,ProductionVPC,all
+Subnet,DatabaseSubnet3,create-new,Type,database,ProductionVPC,all
+Subnet,DatabaseSubnet3,create-new,CIDR,10.0.22.0/24,ProductionVPC,all
+Subnet,DatabaseSubnet3,create-new,AvailabilityZone,2,ProductionVPC,all
+# Internet Gateway
+InternetGateway,ProductionIGW,create-new,AttachToVPC,ProductionVPC,ProductionVPC,all
+# NAT Gateways - High Availability
+NATGateway,ProductionNAT,create-new,Strategy,per-az,PublicSubnet1,all
+# Application Load Balancer
+ALB,WebLoadBalancer,create-new,Type,application,ProductionVPC,all
+ALB,WebLoadBalancer,create-new,Scheme,internet-facing,PublicSubnet1,all
+ALB,WebLoadBalancer,create-new,Subnets,PublicSubnet1;PublicSubnet2;PublicSubnet3,PublicSubnet1,all
+ALB,WebLoadBalancer,create-new,SecurityGroup,ALBSecurityGroup,ALBSecurityGroup,all
+ALB,WebLoadBalancer,create-new,HealthCheckPath,/health,PublicSubnet1,all
+ALB,WebLoadBalancer,create-new,HealthCheckInterval,30,PublicSubnet1,all
+# Security Groups
+SecurityGroup,ALBSecurityGroup,create-new,Description,Application Load Balancer security group,ProductionVPC,all
+SecurityGroup,ALBSecurityGroup,create-new,InboundRule,HTTP:80:0.0.0.0/0,ProductionVPC,all
+SecurityGroup,ALBSecurityGroup,create-new,InboundRule,HTTPS:443:0.0.0.0/0,ProductionVPC,all
+SecurityGroup,WebSecurityGroup,create-new,Description,Web server security group,ProductionVPC,all
+SecurityGroup,WebSecurityGroup,create-new,InboundRule,HTTP:80:ALBSecurityGroup,ProductionVPC,all
+SecurityGroup,WebSecurityGroup,create-new,InboundRule,HTTPS:443:ALBSecurityGroup,ProductionVPC,all
+SecurityGroup,WebSecurityGroup,create-new,InboundRule,RDP:3389:10.0.0.0/16,ProductionVPC,all
+SecurityGroup,AppSecurityGroup,create-new,Description,Application server security group,ProductionVPC,all
+SecurityGroup,AppSecurityGroup,create-new,InboundRule,TCP:8080:WebSecurityGroup,ProductionVPC,all
+SecurityGroup,AppSecurityGroup,create-new,InboundRule,TCP:8443:WebSecurityGroup,ProductionVPC,all
+SecurityGroup,DatabaseSecurityGroup,create-new,Description,Database security group,ProductionVPC,all
+SecurityGroup,DatabaseSecurityGroup,create-new,InboundRule,TCP:3306:AppSecurityGroup,ProductionVPC,all
+SecurityGroup,DatabaseSecurityGroup,create-new,InboundRule,TCP:5432:AppSecurityGroup,ProductionVPC,all
+# Web Tier - Windows Servers
+EC2,WebServer1,create-new,OperatingSystem,Windows2022,WebSecurityGroup,all
+EC2,WebServer1,create-new,InstanceFamily,t3,WebSecurityGroup,all
+EC2,WebServer1,create-new,InstanceSize,medium,WebSecurityGroup,all
+EC2,WebServer1,create-new,InstanceCount,2,WebSecurityGroup,all
+EC2,WebServer1,create-new,SubnetType,private,PrivateSubnet1,all
+EC2,WebServer1,create-new,RootVolumeSize,50,WebSecurityGroup,all
+EC2,WebServer1,create-new,RootVolumeType,gp3,WebSecurityGroup,all
+EC2,WebServer1,create-new,EnableSSM,true,WebSecurityGroup,all
+EC2,WebServer1,create-new,KeyPairName,test,WebSecurityGroup,all
+EC2,WebServer1,create-new,AutoScaling,true,WebSecurityGroup,all
+EC2,WebServer1,create-new,MinSize,2,WebSecurityGroup,all
+EC2,WebServer1,create-new,MaxSize,10,WebSecurityGroup,all
+# Application Tier - Linux Servers
+EC2,AppServer1,create-new,OperatingSystem,AmazonLinux2023,AppSecurityGroup,all
+EC2,AppServer1,create-new,InstanceFamily,m5,AppSecurityGroup,all
+EC2,AppServer1,create-new,InstanceSize,large,AppSecurityGroup,all
+EC2,AppServer1,create-new,InstanceCount,2,AppSecurityGroup,all
+EC2,AppServer1,create-new,SubnetType,private,PrivateSubnet1,all
+EC2,AppServer1,create-new,RootVolumeSize,30,AppSecurityGroup,all
+EC2,AppServer1,create-new,RootVolumeType,gp3,AppSecurityGroup,all
+EC2,AppServer1,create-new,EnableSSM,true,AppSecurityGroup,all
+EC2,AppServer1,create-new,KeyPairName,test,AppSecurityGroup,all
+EC2,AppServer1,create-new,AutoScaling,true,AppSecurityGroup,all
+EC2,AppServer1,create-new,MinSize,2,AppSecurityGroup,all
+EC2,AppServer1,create-new,MaxSize,8,AppSecurityGroup,all
+# RDS Database - Multi-AZ MySQL
+RDS,ProductionDB,create-new,Engine,mysql,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,EngineVersion,8.0.35,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,InstanceClass,db.t3.medium,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,AllocatedStorage,100,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,StorageType,gp3,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,MultiAZ,true,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,BackupRetentionPeriod,7,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,DatabaseName,productiondb,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,MasterUsername,admin,DatabaseSecurityGroup,all
+RDS,ProductionDB,create-new,SubnetGroup,DatabaseSubnet1;DatabaseSubnet2;DatabaseSubnet3,DatabaseSecurityGroup,all
+# ECS Cluster for Containerized Applications
+ECS,ProductionCluster,create-new,LaunchType,FARGATE,ProductionVPC,all
+ECS,ProductionCluster,create-new,ServiceName,WebService,ProductionVPC,all
+ECS,ProductionCluster,create-new,TaskDefinition,WebTask,ProductionVPC,all
+ECS,ProductionCluster,create-new,ContainerImage,nginx:latest,ProductionVPC,all
+ECS,ProductionCluster,create-new,ContainerPort,80,ProductionVPC,all
+ECS,ProductionCluster,create-new,DesiredCount,3,ProductionVPC,all
+ECS,ProductionCluster,create-new,Subnets,PrivateSubnet1;PrivateSubnet2;PrivateSubnet3,ProductionVPC,all
+ECS,ProductionCluster,create-new,SecurityGroup,WebSecurityGroup,WebSecurityGroup,all
+# CloudFront Distribution
+CloudFront,WebDistribution,create-new,OriginType,ALB,WebLoadBalancer,all
+CloudFront,WebDistribution,create-new,OriginDomain,WebLoadBalancer,WebLoadBalancer,all
+CloudFront,WebDistribution,create-new,CacheBehavior,default,WebLoadBalancer,all
+CloudFront,WebDistribution,create-new,ViewerProtocolPolicy,redirect-to-https,WebLoadBalancer,all
+CloudFront,WebDistribution,create-new,Compress,true,WebLoadBalancer,all
+# S3 Buckets for Static Assets and Backups
+S3,StaticAssets,create-new,BucketName,production-static-assets,ProductionVPC,all
+S3,StaticAssets,create-new,Versioning,true,ProductionVPC,all
+S3,StaticAssets,create-new,Encryption,AES256,ProductionVPC,all
+S3,StaticAssets,create-new,PublicAccess,false,ProductionVPC,all
+S3,BackupBucket,create-new,BucketName,production-backups,ProductionVPC,all
+S3,BackupBucket,create-new,Versioning,true,ProductionVPC,all
+S3,BackupBucket,create-new,Encryption,KMS,ProductionVPC,all
+S3,BackupBucket,create-new,LifecyclePolicy,30days-ia-90days-glacier,ProductionVPC,all
+# ElastiCache for Redis Caching
+ElastiCache,ProductionCache,create-new,Engine,redis,AppSecurityGroup,all
+ElastiCache,ProductionCache,create-new,NodeType,cache.t3.micro,AppSecurityGroup,all
+ElastiCache,ProductionCache,create-new,NumNodes,2,AppSecurityGroup,all
+ElastiCache,ProductionCache,create-new,SubnetGroup,PrivateSubnet1;PrivateSubnet2,AppSecurityGroup,all
+ElastiCache,ProductionCache,create-new,SecurityGroup,AppSecurityGroup,AppSecurityGroup,all
+# Lambda Functions for Serverless Processing
+Lambda,ImageProcessor,create-new,Runtime,python3.9,ProductionVPC,all
+Lambda,ImageProcessor,create-new,Handler,lambda_function.lambda_handler,ProductionVPC,all
+Lambda,ImageProcessor,create-new,Timeout,300,ProductionVPC,all
+Lambda,ImageProcessor,create-new,Memory,512,ProductionVPC,all
+Lambda,ImageProcessor,create-new,Trigger,S3:StaticAssets,StaticAssets,all
+# API Gateway for REST APIs
+APIGateway,ProductionAPI,create-new,Type,REST,ProductionVPC,all
+APIGateway,ProductionAPI,create-new,StageName,prod,ProductionVPC,all
+APIGateway,ProductionAPI,create-new,ThrottleLimit,1000,ProductionVPC,all
+APIGateway,ProductionAPI,create-new,Integration,Lambda:ImageProcessor,ImageProcessor,all
+# Route53 for DNS Management
+Route53,ProductionDNS,create-new,HostedZone,example.com,ProductionVPC,all
+Route53,ProductionDNS,create-new,RecordType,A,CloudFront,all
+Route53,ProductionDNS,create-new,Alias,WebDistribution,CloudFront,all
+# CloudWatch for Monitoring and Alerting
+CloudWatch,ProductionMonitoring,create-new,LogGroup,/aws/ec2/production,ProductionVPC,all
+CloudWatch,ProductionMonitoring,create-new,MetricFilter,ErrorCount,ProductionVPC,all
+CloudWatch,ProductionMonitoring,create-new,Alarm,HighCPUUtilization,ProductionVPC,all
+CloudWatch,ProductionMonitoring,create-new,AlarmThreshold,80,ProductionVPC,all
+CloudWatch,ProductionMonitoring,create-new,SNSTopic,ProductionAlerts,ProductionVPC,all
+# WAF for Web Application Security
+WAF,WebApplicationFirewall,create-new,Scope,CLOUDFRONT,CloudFront,all
+WAF,WebApplicationFirewall,create-new,RuleGroup,AWSManagedRulesCommonRuleSet,CloudFront,all
+WAF,WebApplicationFirewall,create-new,RuleGroup,AWSManagedRulesKnownBadInputsRuleSet,CloudFront,all
+WAF,WebApplicationFirewall,create-new,RuleGroup,AWSManagedRulesSQLiRuleSet,CloudFront,all
+# Backup and Disaster Recovery
+Backup,ProductionBackup,create-new,BackupPlan,DailyBackup,ProductionVPC,all
+Backup,ProductionBackup,create-new,BackupVault,ProductionVault,ProductionVPC,all
+Backup,ProductionBackup,create-new,BackupRule,Daily7DaysRetention,ProductionVPC,all
+Backup,ProductionBackup,create-new,Resources,EC2:WebServer1;RDS:ProductionDB,ProductionVPC,all

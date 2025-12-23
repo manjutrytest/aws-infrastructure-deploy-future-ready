@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS MySQL database with Multi-AZ deployment'
+
+Parameters:
+  VPCStackName:
+    Type: String
+    Description: Name of the VPC stack
+    Default: 'dev-vpc'
+  
+  SubnetStackName:
+    Type: String
+    Description: Name of the subnet stack
+    Default: 'dev-subnets'
+  
+  SecurityGroupStackName:
+    Type: String
+    Description: Name of the security group stack
+    Default: 'dev-security-groups'
+  
+  DatabaseName:
+    Type: String
+    Description: Name of the database
+    Default: 'productiondb'
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  
+  MasterUsername:
+    Type: String
+    Description: Master username for the database
+    Default: 'admin'
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  
+  MasterUserPassword:
+    Type: String
+    Description: Master password for the database
+    Default: 'TempPassword123!'
+    MinLength: 8
+    MaxLength: 41
+    NoEcho: true
+  
+  DBInstanceClass:
+    Type: String
+    Description: Database instance class
+    Default: 'db.t3.medium'
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.m5.large
+      - db.m5.xlarge
+  
+  AllocatedStorage:
+    Type: Number
+    Description: Allocated storage in GB
+    Default: 100
+    MinValue: 20
+    MaxValue: 1000
+  
+  BackupRetentionPeriod:
+    Type: Number
+    Description: Backup retention period in days
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+  
+  MultiAZ:
+    Type: String
+    Description: Enable Multi-AZ deployment
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+
+Conditions:
+  IsMultiAZ: !Equals [!Ref MultiAZ, 'true']
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${Environment}-db-subnet-group'
+      DBSubnetGroupDescription: Subnet group for RDS database
+      SubnetIds:
+        - Fn::ImportValue: !Sub '${SubnetStackName}-PrivateSubnet1Id'
+        - Fn::ImportValue: !Sub '${SubnetStackName}-PrivateSubnet2Id'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-db-subnet-group'
+        - Key: Environment
+          Value: !Ref Environment
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mysql8.0
+      Description: Parameter group for MySQL 8.0
+      Parameters:
+        innodb_buffer_pool_size: '{DBInstanceClassMemory*3/4}'
+        max_connections: 1000
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-mysql-params'
+        - Key: Environment
+          Value: !Ref Environment
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${Environment}-${DatabaseName}'
+      DBName: !Ref DatabaseName
+      Engine: mysql
+      EngineVersion: '8.0.35'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub '${SecurityGroupStackName}-DatabaseSecurityGroupId'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBParameterGroupName: !Ref DBParameterGroup
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      MultiAZ: !If [IsMultiAZ, true, false]
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: true
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt RDSEnhancedMonitoringRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-${DatabaseName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  RDSEnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-rds-monitoring-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Read Replica for read scaling (optional)
+  DatabaseReadReplica:
+    Type: AWS::RDS::DBInstance
+    Condition: IsMultiAZ
+    Properties:
+      DBInstanceIdentifier: !Sub '${Environment}-${DatabaseName}-replica'
+      SourceDBInstanceIdentifier: !Ref DatabaseInstance
+      DBInstanceClass: !Ref DBInstanceClass
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-${DatabaseName}-replica'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Role
+          Value: ReadReplica
+
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS Database Endpoint
+    Value: !GetAtt DatabaseInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseEndpoint'
+  
+  DatabasePort:
+    Description: RDS Database Port
+    Value: !GetAtt DatabaseInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabasePort'
+  
+  DatabaseName:
+    Description: Database Name
+    Value: !Ref DatabaseName
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseName'
+  
+  ReadReplicaEndpoint:
+    Condition: IsMultiAZ
+    Description: Read Replica Endpoint
+    Value: !GetAtt DatabaseReadReplica.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-ReadReplicaEndpoint'
+  
+  ConnectionString:
+    Description: Database connection string
+    Value: !Sub 'mysql://${MasterUsername}:${MasterUserPassword}@${DatabaseInstance.Endpoint.Address}:${DatabaseInstance.Endpoint.Port}/${DatabaseName}'
