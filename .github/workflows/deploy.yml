@@ -64,17 +64,17 @@ jobs:
             echo "stacks-to-deploy=$(cat generated-params/deployment-order.json | jq -c '.stacks')" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate CloudFormation templates
+      - name: Validate CloudFormation templates (syntax only)
         run: |
+          echo "Checking CloudFormation template syntax..."
           for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml; do
             if [ -f "$template" ]; then
-              echo "Validating $template..."
-              aws cloudformation validate-template --template-body file://$template --region ${{ env.AWS_REGION }} || exit 1
+              echo "✓ Template found: $template"
+              # Basic YAML syntax check
+              python3 -c "import yaml; yaml.safe_load(open('$template'))" && echo "  YAML syntax valid" || exit 1
             fi
           done
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          echo "All templates have valid YAML syntax"
 
       - name: Upload generated parameters
         uses: actions/upload-artifact@v4
@@ -104,6 +104,17 @@ jobs:
         with:
           name: generated-params-${{ github.event.inputs.environment }}
           path: generated-params/
+
+      - name: Validate CloudFormation templates with AWS
+        run: |
+          echo "Validating CloudFormation templates with AWS..."
+          for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml; do
+            if [ -f "$template" ]; then
+              echo "Validating $template..."
+              aws cloudformation validate-template --template-body file://$template --region ${{ env.AWS_REGION }}
+            fi
+          done
+          echo "All templates validated successfully"
 
       - name: Deploy infrastructure stacks
         run: |
@@ -175,6 +186,17 @@ jobs:
         with:
           name: generated-params-${{ github.event.inputs.environment }}
           path: generated-params/
+
+      - name: Validate CloudFormation templates with AWS
+        run: |
+          echo "Validating CloudFormation templates with AWS..."
+          for template in foundation/*.yml network/*.yml security/*.yml compute/*.yml; do
+            if [ -f "$template" ]; then
+              echo "Validating $template..."
+              aws cloudformation validate-template --template-body file://$template --region ${{ env.AWS_REGION }}
+            fi
+          done
+          echo "All templates validated successfully"
 
       - name: Deploy infrastructure stacks
         run: |
