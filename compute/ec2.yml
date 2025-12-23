@@ -112,6 +112,15 @@ Parameters:
 
 Mappings:
   AmiMap:
+    ap-south-1:
+      AmazonLinux2: ami-07b580c9db4dd9219
+      AmazonLinux2023: ami-0f58b397bc5c1f2e8
+      Ubuntu2004: ami-0a7cf821b91bcccbc
+      Ubuntu2204: ami-0f5ee92e2d63afc18
+      RHEL8: ami-0e6329e222e662a52
+      RHEL9: ami-0f3c7d07486cad139
+      Windows2019: ami-0c956e207f9d113d5
+      Windows2022: ami-067e50f3c2b7ab990
     us-east-1:
       AmazonLinux2: ami-0abcdef1234567890
       AmazonLinux2023: ami-0abcdef1234567891
@@ -130,15 +139,6 @@ Mappings:
       RHEL9: ami-0abcdef1234567895
       Windows2019: ami-0abcdef1234567896
       Windows2022: ami-0abcdef1234567897
-    ap-south-1:
-      AmazonLinux2: ami-0d13e3e640877b0b9
-      AmazonLinux2023: ami-0f58b397bc5c1f2e8
-      Ubuntu2004: ami-0a7cf821b91bcccbc
-      Ubuntu2204: ami-0f5ee92e2d63afc18
-      RHEL8: ami-0e6329e222e662a52
-      RHEL9: ami-0f3c7d07486cad139
-      Windows2019: ami-0c956e207f9d113d5
-      Windows2022: ami-0d13e3e640877b0b9
 
 Conditions:
   EnableSSMCondition: !Equals [!Ref EnableSSM, 'true']

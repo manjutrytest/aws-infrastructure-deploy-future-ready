@@ -30,3 +30,12 @@ EC2,WebServer1,create-new,RootVolumeSize,40,WebSecurityGroup,all
 EC2,WebServer1,create-new,RootVolumeType,gp3,WebSecurityGroup,all
 EC2,WebServer1,create-new,EnableSSM,true,WebSecurityGroup,all
 EC2,WebServer1,create-new,KeyPairName,test,WebSecurityGroup,all
+EC2,WindowsServer,create-new,OperatingSystem,Windows2022,WebSecurityGroup,all
+EC2,WindowsServer,create-new,InstanceFamily,t3,WebSecurityGroup,all
+EC2,WindowsServer,create-new,InstanceSize,medium,WebSecurityGroup,all
+EC2,WindowsServer,create-new,InstanceCount,1,WebSecurityGroup,all
+EC2,WindowsServer,create-new,SubnetType,public,PublicSubnet1,all
+EC2,WindowsServer,create-new,RootVolumeSize,40,WebSecurityGroup,all
+EC2,WindowsServer,create-new,RootVolumeType,gp3,WebSecurityGroup,all
+EC2,WindowsServer,create-new,EnableSSM,true,WebSecurityGroup,all
+EC2,WindowsServer,create-new,KeyPairName,test,WebSecurityGroup,all

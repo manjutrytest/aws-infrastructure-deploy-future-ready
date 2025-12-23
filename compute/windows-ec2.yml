@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Windows EC2 instance using existing networking components'
+
+Parameters:
+  VPCId:
+    Type: String
+    Description: Existing VPC ID
+    Default: ''
+  
+  SubnetId:
+    Type: String
+    Description: Existing Subnet ID for instance placement
+    Default: ''
+  
+  SecurityGroupId:
+    Type: String
+    Description: Existing Security Group ID
+    Default: ''
+  
+  InstanceName:
+    Type: String
+    Description: Name of the Windows EC2 instance
+    Default: 'WindowsServer'
+  
+  InstanceType:
+    Type: String
+    Description: EC2 instance type
+    Default: 't3.medium'
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - m5.large
+      - m5.xlarge
+  
+  RootVolumeSize:
+    Type: Number
+    Description: Root volume size in GB
+    Default: 40
+    MinValue: 30
+    MaxValue: 1000
+  
+  KeyPairName:
+    Type: String
+    Description: EC2 Key Pair name for RDP access
+    Default: 'test'
+  
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+
+Resources:
+  # IAM Role for Windows EC2 instance
+  WindowsEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-windows-ec2-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  WindowsEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref WindowsEC2Role
+
+  # Windows EC2 Instance
+  WindowsEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-067e50f3c2b7ab990  # Windows Server 2022 in ap-south-1
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      IamInstanceProfile: !Ref WindowsEC2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          Write-Host "Windows Server 2022 instance starting..."
+          
+          # Install IIS Web Server
+          Install-WindowsFeature -name Web-Server -IncludeManagementTools
+          
+          # Create a simple HTML page
+          $htmlContent = @"
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Windows Server 2022 - ${InstanceName}</title>
+          </head>
+          <body>
+              <h1>Welcome to Windows Server 2022</h1>
+              <p>Instance: ${InstanceName}</p>
+              <p>Environment: ${Environment}</p>
+              <p>Deployed via CSV-driven CloudFormation</p>
+          </body>
+          </html>
+          "@
+          $htmlContent | Out-File -FilePath "C:\inetpub\wwwroot\index.html" -Encoding UTF8
+          
+          # Configure Windows Firewall for HTTP
+          New-NetFirewallRule -DisplayName "Allow HTTP" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow
+          
+          Write-Host "Windows Server setup completed"
+          </powershell>
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-${InstanceName}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: OperatingSystem
+          Value: Windows2022
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  WindowsInstanceId:
+    Description: Windows EC2 Instance ID
+    Value: !Ref WindowsEC2Instance
+    Export:
+      Name: !Sub '${AWS::StackName}-WindowsInstanceId'
+  
+  WindowsInstancePublicIP:
+    Description: Windows EC2 Instance Public IP
+    Value: !GetAtt WindowsEC2Instance.PublicIp
+    Export:
+      Name: !Sub '${AWS::StackName}-WindowsInstancePublicIP'
+  
+  WindowsInstancePrivateIP:
+    Description: Windows EC2 Instance Private IP
+    Value: !GetAtt WindowsEC2Instance.PrivateIp
+    Export:
+      Name: !Sub '${AWS::StackName}-WindowsInstancePrivateIP'
+  
+  RDPConnectionString:
+    Description: RDP connection command
+    Value: !Sub 'mstsc /v:${WindowsEC2Instance.PublicIp}'
